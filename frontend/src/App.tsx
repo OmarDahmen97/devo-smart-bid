@@ -106,7 +106,7 @@ export default function App() {
         </nav>
 
         {step !== "generation" && (
-          <div className="mx-auto max-w-2xl">
+          <div className="mx-auto max-w-5xl">
             <label className="block text-sm font-semibold text-slate-700">
               Mission Description <span className="text-xs font-normal text-slate-500">(shared across steps)</span>
             </label>
@@ -114,8 +114,8 @@ export default function App() {
               value={missionText}
               onChange={(e) => setMissionText(e.target.value)}
               placeholder="Paste or write the mission description..."
-              rows={4}
-              className="mt-1 field w-full resize-y"
+              rows={8}
+              className="mt-1 min-h-48 field w-full resize-y"
             />
           </div>
         )}

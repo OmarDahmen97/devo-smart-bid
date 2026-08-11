@@ -80,7 +80,7 @@ export function UploadStep({ onUploaded }: { onUploaded: () => void }) {
       <button
         type="button"
         onClick={() => input.current?.click()}
-        className="mt-5 flex min-h-44 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-5 transition hover:border-[#C1121F] hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100"
+        className="mt-5 flex min-h-28 w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-5 py-4 transition hover:border-[#C1121F] hover:bg-red-50 focus:outline-none focus:ring-4 focus:ring-red-100"
       >
         <CloudUpload className="h-8 w-8 text-[#C1121F]" />
         <span className="mt-3 text-sm font-semibold">Drop CVs here</span>
