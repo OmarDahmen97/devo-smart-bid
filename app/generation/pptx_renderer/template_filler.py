@@ -53,6 +53,7 @@ CHAR_BUDGET_PER_BOX = 650
 CHAR_BUDGET_PER_SLOT = 550
 MAX_BULLETS_PER_EXPERIENCE = 5
 MAX_CHARS_PER_BULLET = 220
+SKILLS_CHAR_BUDGET = 500
 
 
 # ---------------------------------------------------------------------------
@@ -197,13 +198,28 @@ def fill_multi_experience_shape(shape, experiences: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 def fill_skills_shape(shape, skills: list[str]) -> None:
-    """One flowing line ('Python  •  SQL  •  RAG  •  ...') instead of one
-    bullet per skill -- a per-item bullet list overflows past ~10 skills."""
+    """One flowing line ('Python  •  SQL  •  ...') instead of one bullet per
+    skill. Truncated to SKILLS_CHAR_BUDGET -- past that, text overlaps the
+    Formation section below it (observed empirically, no auto-fit available)."""
     tf = shape.text_frame
     tf.clear()
     clean = [str(s) for s in skills if s]
+
+    kept = []
+    running_len = 0
+    separator_len = len("  •  ")
+    for skill in clean:
+        added_len = len(skill) + (separator_len if kept else 0)
+        if running_len + added_len > SKILLS_CHAR_BUDGET:
+            break
+        kept.append(skill)
+        running_len += added_len
+
+    text = "  •  ".join(kept)
+    
+
     run = tf.paragraphs[0].add_run()
-    run.text = "  •  ".join(clean)
+    run.text = text
     run.font.size = Pt(8)
 
 
