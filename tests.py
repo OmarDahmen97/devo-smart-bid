@@ -1,31 +1,15 @@
-# file: test_distinct_skills.py
-"""
-Récupère toutes les valeurs distinctes de skills directement depuis
-MongoDB (merged_candidates), sans passer par l'API.
-
-Usage:
-    python test_distinct_skills.py
-"""
-
+# file: check_structure.py
 import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
+import json
 
 load_dotenv()
-mongo_uri = os.getenv("MONGO_URI")
-client = MongoClient(mongo_uri)
+client = MongoClient(os.getenv("MONGO_URI"))
 db = client["cv_platform"]
-merged_candidates = db["merged_candidates"]
+merged = db["merged_candidates"]
 
-
-def main():
-    values = merged_candidates.distinct("skills")
-    values = sorted(v for v in values if v)
-
-    print(f"{len(values)} valeur(s) distincte(s) pour 'skills' :\n")
-    for v in values:
-        print(f"  - {v}")
-
-
-if __name__ == "__main__":
-    main()
+doc = merged.find_one({"name": "Sabria Jeribi"})  # ou filtre par name si tu veux un candidat précis
+doc["_id"] = str(doc["_id"])
+doc["candidate_id"] = str(doc["candidate_id"])
+print(json.dumps(doc, indent=2, ensure_ascii=False, default=str))

@@ -1,6 +1,8 @@
 services:
   mongo:
     image: mongo:7
+    ports:
+    - "27017:27017"
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: cv_platform
@@ -8,7 +10,7 @@ services:
       - mongo_data:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
+      interval: 30s
       timeout: 5s
       retries: 5
     networks:
@@ -25,6 +27,7 @@ services:
       - chroma_data:/chroma_data
       - hf_cache:/root/.cache/huggingface
     environment:
+      PYTHONUNBUFFERED: "1"
       MONGO_URI: mongodb://mongo:27017/cv_platform
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       DEEPL_API_KEY: ${DEEPL_API_KEY}

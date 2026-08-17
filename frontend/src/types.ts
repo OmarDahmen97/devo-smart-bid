@@ -65,45 +65,15 @@ export type RankedResponse = {
   projects: ProjectItem[];
 };
 
-export type GeneratedExperience = {
-  title: string;
-  company: string;
-  dates: string;
-  description: string;
-  responsibilities: string[];
-  _adapted?: boolean;
-};
-
-export type GeneratedProject = {
-  name: string;
-  description: string;
-  _adapted?: boolean;
-};
-
-export type GeneratedContent = {
-  summary: string;
-  skills: string[];
-  expertise_areas: string[];
-  functional_skills: string[];
-  education: string[];
-  certifications: string[];
-  languages: string[];
-  countries_worked: string[];
-  professional_affiliations: string[];
-  experience: GeneratedExperience[];
-  projects: GeneratedProject[];
-};
-
-export type GenerationResultItem = {
-  candidate_id: string;
-  name: string;
-  generated_content: GeneratedContent;
-};
+export type GenerationResultItem =
+  | { candidate_id: string; status: "ok"; download_url: string }
+  | { candidate_id: string; status: "error"; message: string };
 
 export type GenerationResponse = {
-  status: string;
-  message: string;
   results: GenerationResultItem[];
+  zip_download_url?: string;
+  merged_download_url?: string;
+  merge_error?: string;
 };
 
 export type CandidateDetail = Record<string, unknown>;

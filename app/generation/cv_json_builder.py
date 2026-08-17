@@ -8,10 +8,14 @@ from app.generation.mongo_resolver import (
 from app.generation.experience_adapter import (
     adapt_selected_experiences,
     adapt_selected_projects,
+    translate_summary,
+    translate_selected_experiences,
 )
 
 from rapidfuzz import fuzz
 from bson import ObjectId
+
+import re
 
 
 from app.config import (
@@ -238,6 +242,8 @@ def build_matched_cv_json(
         value = candidate.get(section)
         if value:
             result[section] = value
+    if  result.get("summary"):
+        result["summary"] = translate_summary(result["summary"], target_language)        
 
     # 1. Selection via recherche vectorielle
     experience_res = store.search_section(
@@ -277,23 +283,22 @@ def build_matched_cv_json(
             projects.append(item)
 
     # 2. Adaptation dynamique avec le LLM si un texte de mission est fourni
-    if mission_text:
-        if experiences:
-            adapted_exp_map = adapt_selected_experiences(
-                experiences, mission_text, target_language
-            )
-            for exp in experiences:
-                idx = exp["experience_index"]
-                if idx in adapted_exp_map:
-                    if adapted_exp_map[idx].get("description"):
-                        exp["description"] = adapted_exp_map[idx]["description"]
-                    if adapted_exp_map[idx].get("responsibilities"):
-                        exp["responsibilities"] = adapted_exp_map[idx]["responsibilities"]
+    if experiences:
+        if mission_text:
+            adapted_exp_map = adapt_selected_experiences(experiences, mission_text, target_language)
+        else:
+            adapted_exp_map = translate_selected_experiences(experiences, target_language)
+        for exp in experiences:
+            idx = exp["experience_index"]
+            if idx in adapted_exp_map:
+                if adapted_exp_map[idx].get("description"):
+                    exp["description"] = adapted_exp_map[idx]["description"]
+                if adapted_exp_map[idx].get("responsibilities"):
+                    exp["responsibilities"] = adapted_exp_map[idx]["responsibilities"]
 
-        if projects:
-            adapted_proj_map = adapt_selected_projects(
-                projects, mission_text, target_language
-            )
+    if projects:
+        if mission_text:
+            adapted_proj_map = adapt_selected_projects(projects, mission_text, target_language)
             for proj in projects:
                 idx = proj["project_index"]
                 if idx in adapted_proj_map and adapted_proj_map[idx].get("description"):
@@ -306,3 +311,52 @@ def build_matched_cv_json(
         result["projects"] = projects
 
     return result
+
+_WORD_TO_NUM = {
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    "eleven": 11, "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15,
+    "sixteen": 16, "seventeen": 17, "eighteen": 18, "nineteen": 19, "twenty": 20,
+    "un": 1, "deux": 2, "trois": 3, "quatre": 4, "cinq": 5,
+    "six_fr": 6, "sept": 7, "huit": 8, "neuf": 9, "dix": 10,
+}
+
+_YEARS_PATTERN = re.compile(
+    r"\b(\d{1,2})\s*\+?\s*(?:years?|ans)\b"
+    r"|\b(" + "|".join(_WORD_TO_NUM.keys()) + r")\s+(?:years?|ans)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_years_of_experience(summary: str) -> str:
+    """
+    Best-effort extraction of a "X years of experience" figure from free-text
+    summary. Regex-only (no LLM call) -- covers digit form ("7 years",
+    "10+ years") and spelled-out numbers up to twenty in English/French
+    ("seven years of experience", "sept ans d'expérience"). Returns "" if
+    nothing matches; caller must treat that as "omit from template", not
+    as an error.
+    """
+    if not summary:
+        return ""
+    match = _YEARS_PATTERN.search(summary)
+    if not match:
+        return ""
+    digit_group, word_group = match.group(1), match.group(2)
+    if digit_group:
+        return digit_group
+    return str(_WORD_TO_NUM.get(word_group.lower(), ""))
+
+
+def derive_title_from_experiences(experiences: list[dict], all_experiences_fallback: list[dict]) -> str:
+    """
+    Title = title of the most recent experience. "Most recent" here means
+    array position 0 -- CVs are extracted reverse-chronologically, and
+    `dates` is unreliable/frequently "Not specified" in this dataset, so we
+    can't sort by date. Prefers the user's selection; falls back to the
+    candidate's full experience list if nothing was selected.
+    """
+    source = experiences or all_experiences_fallback
+    if not source:
+        return ""
+    return source[0].get("title") or ""

@@ -192,3 +192,87 @@ def adapt_selected_projects(
 
     time.sleep(1)
     return result
+
+
+def translate_summary(summary: str, target_language: str = "English") -> str:
+    """Straight translation of the free-text summary, no mission context."""
+    if not summary:
+        return summary
+
+    prompt = (
+        f"Translate the following candidate CV summary into {target_language}. "
+        "Preserve all facts, numbers, and technical terms exactly -- do not "
+        "add, remove, or embellish anything. Return ONLY the translated text, "
+        "no commentary, no quotes.\n\n"
+        f"SUMMARY:\n{summary}"
+    )
+    response = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+    translated = (response.text or "").strip()
+    return translated or summary
+
+def translate_selected_experiences(experiences: list[dict], target_language: str = "English") -> dict[int, dict]:
+    """
+    Straight translation (no mission alignment) of selected experiences --
+    used when no mission_text is provided, so the candidate's language
+    preference is still honored.
+    """
+    if not experiences:
+        return {}
+
+    items = [
+        {
+            "index": exp["experience_index"],
+            "title_or_name": exp.get("title"),
+            "company": exp.get("company"),
+            "description": exp.get("description"),
+            "responsibilities": exp.get("responsibilities") or [],
+        }
+        for exp in experiences
+    ]
+
+    lines = [
+        f"Translate the following candidate experiences into {target_language}.",
+        "Preserve all facts, dates, company names, and technical terms exactly --",
+        "this is a translation, not a rewrite. Do not add, remove, or embellish anything.",
+        "Return ONLY valid JSON matching the schema below, no markdown, no commentary.",
+        "\nEXPERIENCES TO TRANSLATE:",
+    ]
+    for it in items:
+        lines.append(f"\n[index={it['index']}]")
+        if it.get("title_or_name"):
+            lines.append(f"Title: {it['title_or_name']}")
+        if it.get("company"):
+            lines.append(f"Company: {it['company']}")
+        lines.append(f"Description: {it.get('description') or '(none)'}")
+        if it.get("responsibilities"):
+            resp_text = "; ".join(
+                r.get("description") or r.get("category") or ""
+                for r in it["responsibilities"] if isinstance(r, dict)
+            )
+            lines.append(f"Responsibilities: {resp_text}")
+
+    lines.append(
+        "\n\nReturn JSON in this exact shape:\n"
+        '{"adapted_items": [{"index": <int>, "adapted_description": "...", '
+        '"adapted_responsibilities": [{"category": "...", "description": "..."}]}]}'
+    )
+
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents="\n".join(lines),
+        config={"response_mime_type": "application/json", "max_output_tokens": 4000},
+    )
+    data = _parse_response(response, key="adapted_items")
+
+    result = {}
+    for adapted in data.get("adapted_items", []):
+        if not isinstance(adapted, dict) or "index" not in adapted:
+            continue
+        idx = adapted["index"]
+        result[idx] = {
+            "description": adapted.get("adapted_description", ""),
+            "responsibilities": adapted.get("adapted_responsibilities", []),
+        }
+
+    time.sleep(1)
+    return result

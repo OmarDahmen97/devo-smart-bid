@@ -109,13 +109,21 @@ export async function getRankedExperiencesAndProjects(candidateId: string, missi
 export async function generateAdaptedCV(
   missionText: string,
   targetLanguage: string,
-  candidates: { candidate_id: string; selected_experience_indices: number[]; selected_project_indices: number[] }[]
+  candidates: { candidate_id: string; selected_experience_indices: number[]; selected_project_indices: number[] }[],
+  mergeIntoOneDocument = false
 ): Promise<GenerationResponse> {
   const res = await fetch(`${BASE}generation/cv`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mission_text: missionText, target_language: targetLanguage, candidates }),
+    body: JSON.stringify({
+      mission_text: missionText,
+      target_language: targetLanguage,
+      candidates,
+      merge_into_one_document: mergeIntoOneDocument,
+    }),
   });
   if (!res.ok) throw new Error(`Generation failed: ${res.status}`);
   return handle<GenerationResponse>(res);
 }
+
+

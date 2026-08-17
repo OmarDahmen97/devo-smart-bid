@@ -14,7 +14,8 @@ Main flows:
    GET  /candidates/{candidate_id}  full consolidated candidate detail/CV
    POST /cv/{candidate_id}/experiences-ranked  experiences/projects ranked by similarity
    POST /cv/{candidate_id}/adapted-json        generates adapted CV JSON for specific or auto-selected items
-   POST /generation/cv              stub -- template generation not implemented yet
+   POST /generation/cv              batch-generates filled PPTX CV(s) from a user selection
+   GET  /generation/cv/{candidate_id}/download  downloads a previously generated PPTX
 """
 
 from typing import Optional
@@ -22,6 +23,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException, Path
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import shutil
 import tempfile
@@ -52,29 +54,13 @@ from app.main_usage import (
     delete_candidate,
     update_candidate_name,
     generate_cv_from_selection,
+    GENERATED_CV_DIR,
 )
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("[startup] Chargement du modèle SBERT et de ChromaDB...")
-    get_embedder()
-    get_store()
-    print("[startup] Prêt.")
-    yield
 
 
-app = FastAPI(title="CV Platform API", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-candidate_service = CandidateService(merged_candidates_collection)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +90,9 @@ class UpdateNameRequest(BaseModel):
 
 
 class GenerationRequest(BaseModel):
+    # None = no LLM wording adaptation, experiences are inserted as-is.
+    mission_text: Optional[str] = None
+    target_language: str = "French"
     candidates: list[SelectedCandidate]
 
 
@@ -118,6 +107,44 @@ class AdvancedSearchRequest(BaseModel):
     degree: Optional[str] = None
     page: int = 1
     limit: int = 20
+
+class GenerationRequest(BaseModel):
+    mission_text: Optional[str] = None
+    target_language: str = "French"
+    candidates: list[SelectedCandidate]
+    merge_into_one_document: bool = False    
+
+
+#Health check endpoint
+_backend_ready = False
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("[startup] Chargement du modèle SBERT et de ChromaDB...")
+    get_embedder()
+    get_store()
+    global _backend_ready
+    _backend_ready = True
+    print("[startup] Prêt.")
+    yield
+
+
+
+
+app = FastAPI(title="CV Platform API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+candidate_service = CandidateService(merged_candidates_collection)
+@app.get("/health")
+async def health():
+    return {"ready": _backend_ready}
 
 
 # ---------------------------------------------------------------------------
@@ -402,10 +429,45 @@ async def generate_adapted_cv_json(candidate_id: str, request: CustomSelectionAd
 
 
 # ---------------------------------------------------------------------------
-# 3. CV generation
+# 3. CV generation (PPTX template)
 # ---------------------------------------------------------------------------
 
 @app.post("/generation/cv")
 async def generate_cv(request: GenerationRequest):
-    """Generate final formatted CV(s)."""
+    """
+    Generates one filled PPTX per candidate in the batch. Returns, per
+    candidate, either a download_url (status "ok") or an error message
+    (status "error") -- callers should check status per-item, not rely on
+    the endpoint itself failing.
+    """
     return generate_cv_from_selection(request.model_dump())
+
+
+@app.get("/generation/cv/{candidate_id}/download")
+async def download_generated_cv(candidate_id: str):
+    path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.pptx")
+    if not os.path.exists(path):
+        raise HTTPException(
+            status_code=404,
+            detail="CV non généré : appelez POST /generation/cv d'abord.",
+        )
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        filename=f"CV_{candidate_id}.pptx",
+    )
+
+@app.get("/generation/download/{filename}")
+async def download_generated_file(filename: str):
+    # filename is server-generated (batch_<uuid>.zip / merged_<uuid>.pptx) --
+    # no user input reaches the filesystem path beyond this basename check.
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    path = os.path.join(GENERATED_CV_DIR, filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Fichier introuvable ou expiré.")
+    media_type = (
+        "application/zip" if filename.endswith(".zip")
+        else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    return FileResponse(path, media_type=media_type, filename=filename)
