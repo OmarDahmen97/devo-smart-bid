@@ -184,28 +184,6 @@ export function MatchingStep({
         Run semantic matching, or search by name / country / skill to add candidates.
       </p>
 
-      <div className="mt-4 rounded-xl border border-red-100 bg-red-50/40 p-4">
-        <p className="text-sm font-semibold text-red-900">Delete Candidate</p>
-        <p className="text-xs text-red-700">Permanently removes a candidate from the database.</p>
-        <div className="mt-3 flex gap-2">
-          <select
-            value={deleteTarget}
-            onChange={(e) => setDeleteTarget(e.target.value)}
-            className="field flex-1"
-          >
-            <option value="">Select a candidate...</option>
-            {deleteList.map((c) => (
-              <option key={c.candidate_id} value={c.candidate_id}>{c.name}</option>
-            ))}
-          </select>
-          <button onClick={handleDeleteSelected} disabled={loading || !deleteTarget} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-70">
-            Delete
-          </button>
-          <button onClick={loadDeleteList} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
-            Refresh
-          </button>
-        </div>
-      </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button onClick={() => setTab("matching")} className={tabClass("matching")}>

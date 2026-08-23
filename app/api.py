@@ -54,6 +54,7 @@ from app.main_usage import (
     delete_candidate,
     update_candidate_name,
     generate_cv_from_selection,
+    generate_docx_from_selection,
     GENERATED_CV_DIR,
 )
 
@@ -456,7 +457,36 @@ async def download_generated_cv(candidate_id: str):
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         filename=f"CV_{candidate_id}.pptx",
     )
+@app.post("/generation/cv-docx")
+async def generate_cv_docx(request: GenerationRequest):
+    """
+    Generates one filled DOCX CV per selected candidate
+    using the supervisor's Word template.
+    """
+    return generate_docx_from_selection(request.model_dump())
 
+
+@app.get("/generation/cv-docx/{candidate_id}/download")
+async def download_generated_cv_docx(candidate_id: str):
+    path = os.path.join(
+        GENERATED_CV_DIR,
+        f"{candidate_id}.docx"
+    )
+
+    if not os.path.exists(path):
+        raise HTTPException(
+            status_code=404,
+            detail="CV DOCX non généré : appelez POST /generation/cv-docx d'abord.",
+        )
+
+    return FileResponse(
+        path,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument"
+            ".wordprocessingml.document"
+        ),
+        filename=f"CV_{candidate_id}.docx",
+    )
 @app.get("/generation/download/{filename}")
 async def download_generated_file(filename: str):
     # filename is server-generated (batch_<uuid>.zip / merged_<uuid>.pptx) --

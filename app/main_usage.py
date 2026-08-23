@@ -41,6 +41,8 @@ from app.generation.experience_adapter import adapt_selected_experiences, adapt_
 from app.generation.pptx_renderer.template_filler import render_cv_pptx
 from app.generation.pptx_renderer.deck_merger import merge_pptx_files
 
+from app.generation.docx_renderer.template_filler import render_cv_docx
+
 from app.extraction.pipeline import extract_and_store_cv
 
 load_dotenv()
@@ -580,7 +582,66 @@ def generate_cv_from_selection(payload: dict) -> dict:
                 response["merge_error"] = f"{type(e).__name__}: {e}"
 
     return response
+def generate_docx_from_selection(payload: dict) -> dict:
+    mission_text = payload.get("mission_text")
+    target_language = payload.get("target_language", "French")
 
+    os.makedirs(GENERATED_CV_DIR, exist_ok=True)
+
+    results = []
+
+    for entry in payload.get("candidates", []):
+        candidate_id = entry["candidate_id"]
+
+        cv_json = build_cv_json_from_selection(
+            merged_candidates_collection,
+            candidate_id=candidate_id,
+            selected_experience_indices=entry.get(
+                "selected_experience_indices", []
+            ),
+            selected_project_indices=entry.get(
+                "selected_project_indices", []
+            ),
+            mission_text=mission_text,
+            target_language=target_language,
+        )
+
+        if not cv_json:
+            results.append({
+                "candidate_id": candidate_id,
+                "status": "error",
+                "message": "Candidat introuvable."
+            })
+            continue
+
+        output_path = os.path.join(
+            GENERATED_CV_DIR,
+            f"{candidate_id}.docx"
+        )
+
+        try:
+            render_cv_docx(
+                cv_json,
+                output_path,
+                target_language=target_language,
+            )
+        except Exception as e:
+            results.append({
+                "candidate_id": candidate_id,
+                "status": "error",
+                "message": f"{type(e).__name__}: {e}"
+            })
+            continue
+
+        results.append({
+            "candidate_id": candidate_id,
+            "status": "ok",
+            "download_url": (
+                f"/generation/cv-docx/{candidate_id}/download"
+            ),
+        })
+
+    return {"results": results}
 
 def run_profile_mode(cv_path: str = None, normalized_name: str = None) -> dict:
     candidate = get_candidate(cv_path=cv_path, normalized_name=normalized_name)

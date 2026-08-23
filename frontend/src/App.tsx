@@ -7,6 +7,8 @@ import { ReviewStep } from "./components/ReviewStep";
 import { GenerationStep } from "./components/GenerationStep";
 import { CandidateDetailModal } from "./components/CandidateDetailModal";
 import type { SelectionEntry, CandidateSelection, Step } from "./types";
+import { Trash2 } from "lucide-react";
+import { DeleteCandidateModal } from "./components/DeleteCandidateModal";
 
 const steps: { key: Step; label: string }[] = [
   { key: "upload", label: "Upload CVs" },
@@ -22,6 +24,7 @@ export default function App() {
   const [reviewSelections, setReviewSelections] = useState<Record<string, { selected_experience_indices: number[]; selected_project_indices: number[] }>>({});
   const [detailCandidate, setDetailCandidate] = useState<{ candidateId: string; name: string } | null>(null);
   const [toast, setToast] = useState("");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -56,14 +59,40 @@ export default function App() {
   };
 
   return (
-    <main className="min-h-screen pb-16">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-          <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-content-center rounded-lg bg-[#C1121F] text-sm font-black text-white">D</div>
-            <span className="font-bold tracking-tight">Devosmart-Bid</span>
+    <main className="min-h-screen bg-slate-50 pb-16">
+      <header className="sticky top-0 z-50 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <div className="flex items-center gap-4">
+            <img
+              src="https://pbs.twimg.com/profile_images/1465734821402005512/drXcIBUn_400x400.jpg"
+              alt="Devoteam"
+              className="h-12 w-auto object-contain"
+            />
+
+            <div>
+              <h1 className="text-xl font-bold tracking-tight text-slate-900">
+                DevoSmartBid
+              </h1>
+              <p className="hidden text-sm text-slate-500 sm:block">
+                AI-Powered CV Matching Platform
+              </p>
+            </div>
           </div>
-          <span className="hidden text-sm text-slate-500 sm:block">Smart CV Matching</span>
+
+          <div className="hidden items-center gap-2 rounded-full bg-slate-100 px-4 py-2 sm:flex">
+            <div className="h-2 w-2 rounded-full bg-green-500" />
+            <span className="text-sm font-medium text-slate-600">
+              Smart CV Matching
+            </span>
+          </div>
+
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="ml-2 inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-red-50 hover:text-[#C1121F]"
+          >
+            <Trash2 className="h-4 w-4" />
+            <span className="hidden sm:inline">Manage Candidates</span>
+          </button>
         </div>
       </header>
 
@@ -86,17 +115,15 @@ export default function App() {
                 onClick={() => {
                   if (done || active) setStep(s.key);
                 }}
-                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                  active
-                    ? "bg-[#C1121F] text-white"
-                    : done
-                      ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                      : "bg-slate-100 text-slate-500"
-                }`}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition ${active
+                  ? "bg-[#C1121F] text-white"
+                  : done
+                    ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                    : "bg-slate-100 text-slate-500"
+                  }`}
               >
-                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                  active ? "bg-white/20" : done ? "bg-emerald-200 text-emerald-800" : "bg-slate-200 text-slate-500"
-                }`}>
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${active ? "bg-white/20" : done ? "bg-emerald-200 text-emerald-800" : "bg-slate-200 text-slate-500"
+                  }`}>
                   {done ? <Check className="h-3 w-3" /> : i + 1}
                 </span>
                 {s.label}
@@ -106,7 +133,7 @@ export default function App() {
         </nav>
 
         {step !== "generation" && (
-          <div className="mx-auto max-w-5xl">
+          <div className="mx-auto max-w-2xl">
             <label className="block text-sm font-semibold text-slate-700">
               Mission Description <span className="text-xs font-normal text-slate-500">(shared across steps)</span>
             </label>
@@ -114,13 +141,8 @@ export default function App() {
               value={missionText}
               onChange={(e) => setMissionText(e.target.value)}
               placeholder="Paste or write the mission description..."
-<<<<<<< HEAD
-              rows={8}
-              className="mt-1 min-h-48 field w-full resize-y"
-=======
               rows={4}
               className="mt-1 field w-full min-h-[240px] resize-y"
->>>>>>> 23c4f48c207344fc7566874346f26a98d0435ef4
             />
           </div>
         )}
@@ -235,6 +257,11 @@ export default function App() {
             <Check className="h-4 w-4 text-emerald-400" />
             {toast}
           </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showDeleteModal && (
+          <DeleteCandidateModal onClose={() => setShowDeleteModal(false)} />
         )}
       </AnimatePresence>
     </main>
