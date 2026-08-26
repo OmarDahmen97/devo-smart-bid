@@ -111,7 +111,8 @@ export async function generateAdaptedCV(
   missionText: string,
   targetLanguage: string,
   candidates: { candidate_id: string; selected_experience_indices: number[]; selected_project_indices: number[] }[],
-  mergeIntoOneDocument = false
+  mergeIntoOneDocument = false,
+  outputFormat: "pptx" | "docx" = "pptx"
 ): Promise<GenerationResponse> {
   const res = await fetch(`${BASE}generation/cv`, {
     method: "POST",
@@ -121,6 +122,7 @@ export async function generateAdaptedCV(
       target_language: targetLanguage,
       candidates,
       merge_into_one_document: mergeIntoOneDocument,
+      output_format: outputFormat,
     }),
   });
   if (!res.ok) throw new Error(`Generation failed: ${res.status}`);
@@ -142,5 +144,6 @@ export async function suggestCertifications(q: string, limit = 10): Promise<stri
   const data = await handle<SuggestResponse>(res);
   return data.suggestions;
 }
+
 
 

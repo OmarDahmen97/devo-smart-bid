@@ -39,6 +39,7 @@ from app.profiling.profile_builder import build_profiles_document, store_candida
 from app.generation.experience_adapter import adapt_selected_experiences, adapt_selected_projects,translate_summary,translate_selected_experiences
 
 from app.generation.pptx_renderer.template_filler import render_cv_pptx
+from app.generation.docx_renderer.template_filler import render_cv_docx
 from app.generation.pptx_renderer.deck_merger import merge_pptx_files
 
 from app.extraction.pipeline import extract_and_store_cv
@@ -51,6 +52,11 @@ merged_candidates_collection = db["merged_candidates"]
 candidate_profiles_collection = db["candidate_profiles"]
 
 _store = None
+
+RENDERERS = {
+    "pptx": {"render": render_cv_pptx, "extension": "pptx"},
+    "docx": {"render": render_cv_docx, "extension": "docx"},
+}
 
 
 def get_embedder():
@@ -519,13 +525,27 @@ GENERATED_CV_DIR = "generated_cvs"
 
 
 def generate_cv_from_selection(payload: dict) -> dict:
+    print(f"[DEBUG RAW PAYLOAD] {payload!r}")
     mission_text = payload.get("mission_text")
     target_language = payload.get("target_language", "French")
     merge_into_one_document = payload.get("merge_into_one_document", False)
+    output_format = payload.get("output_format", "pptx")
+    print(f"[DEBUG] output_format={output_format!r}, RENDERERS keys={list(RENDERERS.keys())}, extension={RENDERERS.get(output_format, {}).get('extension')!r}")
+
+    if output_format not in RENDERERS:
+        return {"results": [], "error": f"Format de sortie non supporté : {output_format!r}"}
+
+    renderer = RENDERERS[output_format]["render"]
+    extension = RENDERERS[output_format]["extension"]
+
+    # Merge is only implemented for pptx -- silently ignored for docx rather
+    # than erroring, since the front end disables the checkbox for docx.
+    can_merge = output_format == "pptx"
+
     os.makedirs(GENERATED_CV_DIR, exist_ok=True)
 
     results = []
-    generated_paths = []  # (candidate_id, path) for successfully generated files
+    generated_paths = []
 
     for entry in payload.get("candidates", []):
         candidate_id = entry["candidate_id"]
@@ -542,9 +562,9 @@ def generate_cv_from_selection(payload: dict) -> dict:
                              "message": "Candidat introuvable."})
             continue
 
-        output_path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.pptx")
+        output_path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.{extension}")
         try:
-            render_cv_pptx(cv_json, output_path, target_language=target_language)
+            renderer(cv_json, output_path, target_language=target_language)
         except Exception as e:
             results.append({"candidate_id": candidate_id, "status": "error",
                              "message": f"{type(e).__name__}: {e}"})
@@ -554,23 +574,21 @@ def generate_cv_from_selection(payload: dict) -> dict:
         results.append({
             "candidate_id": candidate_id,
             "status": "ok",
-            "download_url": f"/generation/cv/{candidate_id}/download",
+            "download_url": f"/generation/cv/{candidate_id}/download?format={extension}",
         })
 
     response = {"results": results}
 
     if generated_paths:
-        # Zip of all individual files -- always offered when >1 file exists.
         if len(generated_paths) > 1:
             batch_id = uuid.uuid4().hex
             zip_path = os.path.join(GENERATED_CV_DIR, f"batch_{batch_id}.zip")
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for candidate_id, path in generated_paths:
-                    zf.write(path, arcname=f"CV_{candidate_id}.pptx")
+                    zf.write(path, arcname=f"CV_{candidate_id}.{extension}")
             response["zip_download_url"] = f"/generation/download/batch_{batch_id}.zip"
 
-        # Single merged document, only if explicitly requested.
-        if merge_into_one_document and len(generated_paths) > 1:
+        if merge_into_one_document and can_merge and len(generated_paths) > 1:
             merged_id = uuid.uuid4().hex
             merged_path = os.path.join(GENERATED_CV_DIR, f"merged_{merged_id}.pptx")
             try:
@@ -578,9 +596,10 @@ def generate_cv_from_selection(payload: dict) -> dict:
                 response["merged_download_url"] = f"/generation/download/merged_{merged_id}.pptx"
             except Exception as e:
                 response["merge_error"] = f"{type(e).__name__}: {e}"
+        elif merge_into_one_document and not can_merge:
+            response["merge_error"] = "La fusion en un seul document n'est pas encore disponible pour le format DOCX."
 
     return response
-
 
 def run_profile_mode(cv_path: str = None, normalized_name: str = None) -> dict:
     candidate = get_candidate(cv_path=cv_path, normalized_name=normalized_name)

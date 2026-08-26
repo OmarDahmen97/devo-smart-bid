@@ -93,10 +93,11 @@ class UpdateNameRequest(BaseModel):
 
 
 class GenerationRequest(BaseModel):
-    # None = no LLM wording adaptation, experiences are inserted as-is.
     mission_text: Optional[str] = None
     target_language: str = "French"
     candidates: list[SelectedCandidate]
+    merge_into_one_document: bool = False
+    output_format: str = "pptx"
 
 
 class AdvancedSearchRequest(BaseModel):
@@ -111,11 +112,7 @@ class AdvancedSearchRequest(BaseModel):
     page: int = 1
     limit: int = 20
 
-class GenerationRequest(BaseModel):
-    mission_text: Optional[str] = None
-    target_language: str = "French"
-    candidates: list[SelectedCandidate]
-    merge_into_one_document: bool = False    
+ 
 
 
 class ScoreRequest(BaseModel):
@@ -480,17 +477,21 @@ async def generate_cv(request: GenerationRequest):
 
 
 @app.get("/generation/cv/{candidate_id}/download")
-async def download_generated_cv(candidate_id: str):
-    path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.pptx")
+async def download_generated_cv(candidate_id: str, format: str = "pptx"):
+    if format not in ("pptx", "docx"):
+        raise HTTPException(status_code=400, detail="Format invalide.")
+    path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.{format}")
     if not os.path.exists(path):
         raise HTTPException(
             status_code=404,
             detail="CV non généré : appelez POST /generation/cv d'abord.",
         )
-    return FileResponse(
-        path,
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename=f"CV_{candidate_id}.pptx",
+    media_type = (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        if format == "pptx" else
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(path, media_type=media_type, filename=f"CV_{candidate_id}.{format}"
     )
 
 @app.get("/generation/download/{filename}")

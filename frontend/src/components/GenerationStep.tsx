@@ -21,6 +21,7 @@ export function GenerationStep({
   const [result, setResult] = useState<GenerationResponse | null>(null);
   const [error, setError] = useState("");
   const [mergeIntoOne, setMergeIntoOne] = useState(false);
+  const [outputFormat, setOutputFormat] = useState<"pptx" | "docx">("pptx");
 
   const nameFor = (candidateId: string) =>
     selection.find((s) => s.candidate_id === candidateId)?.name || candidateId;
@@ -37,7 +38,7 @@ export function GenerationStep({
           selected_experience_indices: reviewSelections[s.candidate_id].selected_experience_indices,
           selected_project_indices: reviewSelections[s.candidate_id].selected_project_indices,
         }));
-      const data = await generateAdaptedCV(missionText, targetLanguage, candidates, mergeIntoOne);
+      const data = await generateAdaptedCV(missionText, targetLanguage, candidates, mergeIntoOne, outputFormat);
       setResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed");
@@ -51,7 +52,7 @@ export function GenerationStep({
       <p className="label">Step 4 — Generate CV</p>
       <h2 className="mt-2 text-lg font-bold">Generate Mission-Tailored CV</h2>
       <p className="mt-1 text-sm text-slate-500">
-        Generates a filled PPTX for each selected candidate, using the DVT template.
+        Generates a filled {outputFormat.toUpperCase()} for each selected candidate, using the DVT template.
       </p>
 
       {!result && (
@@ -67,8 +68,21 @@ export function GenerationStep({
             <option>Spanish</option>
             <option>German</option>
           </select>
+          <label className="mt-4 block text-sm font-semibold">Output Format</label>
+          <select
+            value={outputFormat}
+            onChange={(e) => {
+              const fmt = e.target.value as "pptx" | "docx";
+              setOutputFormat(fmt);
+              if (fmt === "docx") setMergeIntoOne(false); // merge not supported for docx yet
+            }}
+            className="field mt-1 w-full max-w-sm"
+          >
+            <option value="pptx">PowerPoint (.pptx)</option>
+            <option value="docx">Word (.docx)</option>
+          </select>
 
-          {selection.length > 1 && (
+          {selection.length > 1 && outputFormat === "pptx" && (
             <label className="mt-3 flex items-center gap-2 text-sm text-slate-600">
               <input
                 type="checkbox"
@@ -135,9 +149,8 @@ export function GenerationStep({
           {result.results.map((r) => (
             <div
               key={r.candidate_id}
-              className={`flex items-center justify-between rounded-xl border p-4 ${
-                r.status === "ok" ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
-              }`}
+              className={`flex items-center justify-between rounded-xl border p-4 ${r.status === "ok" ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
+                }`}
             >
               <div className="flex items-center gap-3">
                 {r.status === "ok" ? (
@@ -150,6 +163,7 @@ export function GenerationStep({
                   {r.status === "error" && <p className="mt-0.5 text-xs text-red-700">{r.message}</p>}
                 </div>
               </div>
+
               {r.status === "ok" && (
                 <a
                   href={r.download_url}
@@ -157,9 +171,10 @@ export function GenerationStep({
                   className="inline-flex items-center gap-2 rounded-xl bg-[#C1121F] px-3 py-2 text-xs font-bold text-white hover:bg-[#A30F1A]"
                 >
                   <Download className="h-4 w-4" />
-                  Download PPTX
+                  Download {outputFormat.toUpperCase()}
                 </a>
               )}
+
             </div>
           ))}
         </motion.div>

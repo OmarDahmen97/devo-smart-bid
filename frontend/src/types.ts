@@ -121,3 +121,4 @@ export type Candidate = {
   certifications: string[];
   company: string;
 };
+export type OutputFormat = "pptx" | "docx";
