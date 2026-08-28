@@ -452,16 +452,8 @@ def fill_education_shape(shape, education: list[dict], font_pt: float = 7.5) -> 
 
 def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
     """
-    Rebuilds the entire left column's vertical flow from scratch, instead of
-    trusting the template's original box heights/positions (which are
-    oversized placeholders relying on short text -- Formation's label (874)
-    sits ABOVE skills' (881) own declared bottom edge even in the untouched
-    template, so "push whatever is below original_bottom" is not a valid
-    strategy here).
-
-    Order (top to bottom, confirmed from template geometry): Compétences
-    label (883) -> skills content (881) -> Formation label (874) ->
-    education content (879) -> Réalisations label (885) -> exp2 block (887).
+    Recalcule la position verticale (top) de chaque section de la colonne de gauche
+    en se basant UNIQUEMENT sur la hauteur réelle du texte injecté.
     """
     shapes = slide.shapes
     label_skills = find_shape_by_id(shapes, 883)
@@ -472,10 +464,13 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
     exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
     exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
 
-    gap = 45720  # ~0.05in between stacked blocks
+    gap = 91440  # ~0.1 pouce d'espacement uniforme entre les blocs (ajustable)
 
-    # --- Fill skills content, compute its real needed height ---
+    # -----------------------------------------------------------------------
+    # 1. Remplissage & Calcul de la hauteur réelle de COMPÉTENCES
+    # -----------------------------------------------------------------------
     skills_text = ""
+    skills_height = 0
     if skills_shape is not None:
         skills = cv_json.get("skills") or []
         tf = skills_shape.text_frame
@@ -486,14 +481,15 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
             run = tf.paragraphs[0].add_run()
             run.text = skills_text
             run.font.size = Pt(8)
-    skills_height = (
-        max(skills_shape.height, _estimate_needed_height_emu([skills_text], skills_shape.width, 8))
-        if skills_shape is not None and skills_text else
-        (skills_shape.height if skills_shape is not None else 0)
-    )
+            # Calcul de la hauteur exacte requise par le texte (sans plancher sur la hauteur d'origine)
+            skills_height = _estimate_needed_height_emu([skills_text], skills_shape.width, font_pt=8)
+            skills_shape.height = skills_height
 
-    # --- Fill education content, compute its real needed height ---
+    # -----------------------------------------------------------------------
+    # 2. Remplissage & Calcul de la hauteur réelle de FORMATION
+    # -----------------------------------------------------------------------
     education_lines = []
+    education_height = 0
     if education_shape is not None:
         education = cv_json.get("education") or []
         tf = education_shape.text_frame
@@ -512,44 +508,57 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
             run = para.add_run()
             run.text = line
             run.font.size = Pt(7.5)
-    education_height = (
-        max(education_shape.height, _estimate_needed_height_emu(education_lines, education_shape.width, 7.5))
-        if education_shape is not None and education_lines else
-        (education_shape.height if education_shape is not None else 0)
-    )
+            
+        if education_lines:
+            # Calcul de la hauteur exacte requise par toutes les lignes de formation
+            education_height = _estimate_needed_height_emu(education_lines, education_shape.width, font_pt=7.5)
+            education_shape.height = education_height
 
-    # --- Reflow: place each block right after the previous one's real height ---
+    # -----------------------------------------------------------------------
+    # 3. REFLOW (Positionnement dynamique du haut vers le bas)
+    # -----------------------------------------------------------------------
     cursor = label_skills.top if label_skills is not None else 1167879
 
+    # Positionnement Compétences
     if label_skills is not None:
-        cursor = label_skills.top + label_skills.height + gap
-    if skills_shape is not None:
+        cursor = label_skills.top + label_skills.height + (gap // 2)
+    if skills_shape is not None and skills_height > 0:
         skills_shape.top = cursor
         cursor = cursor + skills_height + gap
+    elif skills_shape is not None:
+        # Si pas de compétences, on cache/réduit le bloc
+        skills_shape.height = 0
 
+    # Positionnement Formation
     if label_formation is not None:
         label_formation.top = cursor
-        cursor = cursor + label_formation.height + gap
-    if education_shape is not None:
+        cursor = cursor + label_formation.height + (gap // 2)
+    if education_shape is not None and education_height > 0:
         education_shape.top = cursor
         cursor = cursor + education_height + gap
+    elif education_shape is not None:
+        education_shape.height = 0
 
+    # Positionnement Réalisations / Expérience 2 sur la colonne de gauche
     if label_realisations is not None:
         label_realisations.top = cursor
-        cursor = cursor + label_realisations.height + gap
+        cursor = cursor + label_realisations.height + (gap // 2)
     if exp2_shape is not None:
         exp2_shape.top = cursor
 
-    # --- Relocate exp2 to the right column if the left column ran out of room ---
+    # -----------------------------------------------------------------------
+    # 4. Relocalisation de l'Expérience 2 à droite si la colonne déborde
+    # -----------------------------------------------------------------------
     if exp2_shape is not None and exp2_shape.top >= SAFE_COLUMN_BOTTOM_EMU:
-        print(f"[layout] exp2 top={exp2_shape.top} exceeds safe bottom -- relocating to second column")
         if exp1_shape is not None:
             exp2_shape.left = exp1_shape.left
-            exp2_shape.top = exp1_shape.top + exp1_shape.height + 91440
+            exp2_shape.top = exp1_shape.top + exp1_shape.height + gap
 
 
-def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> None:
+def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> list[dict]:
     shapes = slide.shapes
+    
+    # 1. Champs statiques
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["name"]), cv_json.get("name") or "")
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["title"]), cv_json.get("title") or "")
 
@@ -561,23 +570,18 @@ def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> None:
     )
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["summary"]), cv_json.get("summary") or "")
 
-    # 1. Remplir D'ABORD les contenus des expériences
-    experiences = cv_json.get("experience") or []
-    exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
-    exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
-    
-    exp1 = experiences[0] if len(experiences) > 0 else {}
-    exp2 = experiences[1] if len(experiences) > 1 else {}
-    
-    fill_single_experience_shape(exp1_shape, exp1)
-    fill_single_experience_shape(exp2_shape, exp2)
-
-    # 2. Repositionner dynamiquement la colonne de gauche (skills, edu, exp2) APRÈS le remplissage
+    # 2. Reflow dynamique de la colonne de gauche (skills & education adaptent leur hauteur)
     _fill_left_column_dynamic(slide, cv_json)
 
+    # 3. Remplissage dynamique des expériences + Retour des expériences restantes pour le slide 2
+    remaining_experiences = _fill_experiences_dynamically(slide, cv_json)
+
+    # Supprimer la photo exemple
     photo = find_shape_by_id(shapes, SLIDE1_SHAPES["photo"])
     if photo is not None:
         remove_shape(photo)
+
+    return remaining_experiences
    
     
 
@@ -645,6 +649,7 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
     workdir = Path("/tmp") / f"pptx_render_{uuid.uuid4().hex}"
     box_a_capacity, box_b_capacity = _get_slide2_box_capacities(TEMPLATE_PATH)
     per_box_budget = min(box_a_capacity, box_b_capacity)
+    
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True)
@@ -652,16 +657,20 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
     with zipfile.ZipFile(TEMPLATE_PATH) as z:
         z.extractall(workdir)
 
-    # 1. Compute pagination BEFORE touching python-pptx.
-    experiences = cv_json.get("experience") or []
-    remaining = experiences[2:]
-    boxes = _paginate_by_char_budget(remaining, per_box_budget)
-    # No "or [[]]" fallback -- an empty pages list means slide 2 isn't needed at all.
+    # Charger le document d'abord pour remplir slide 1 et calculer la suite
+    prs_temp = Presentation(TEMPLATE_PATH)
+    
+    # 1. Remplir le slide 1 et récupérer EXACTEMENT les expériences non casées
+    remaining_experiences = fill_slide1(prs_temp.slides[0], cv_json, target_language)
+
+    # 2. Pagination de Slide 2 basée uniquement sur le surplus réel
+    boxes = _paginate_by_char_budget(remaining_experiences, per_box_budget)
     pages = [boxes[i:i + 2] for i in range(0, len(boxes), 2)]
 
+    # 3. Duplication XML des slides si nécessaire
     extra_slide_paths = [duplicate_slide2(workdir) for _ in pages[1:]]
 
-    # 3. Rezip into an intermediate file, then open it with python-pptx.
+    # Re-zipper et traiter le document final
     intermediate_path = workdir.parent / f"{workdir.name}_intermediate.pptx"
     with zipfile.ZipFile(intermediate_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in workdir.rglob("*"):
@@ -670,8 +679,7 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
 
     prs = Presentation(str(intermediate_path))
 
-    # slides[0] = slide1, slides[1] = slide2, slides[2:] = duplicated pages,
-    # in the same order they were added to sldIdLst.
+    # Appliquer le remplissage sur le fichier final
     fill_slide1(prs.slides[0], cv_json, target_language)
 
     if pages:
@@ -682,11 +690,9 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
         _remove_slide(prs, index=1)
 
     prs.save(output_path)
-
     shutil.rmtree(workdir)
     intermediate_path.unlink()
     return output_path
-
 #Rough estimate of how many characters fit in a shape's text box
 def _estimate_capacity_chars(shape, font_pt: float = 8) -> int:   
     if shape is None or not shape.width or not shape.height:
@@ -703,3 +709,51 @@ def _estimate_capacity_chars(shape, font_pt: float = 8) -> int:
 
     return int(chars_per_line * num_lines)
 
+def _fill_experiences_dynamically(slide, cv_json: dict) -> list[dict]:
+    """
+    Remplis dynamiquement les zones d'expériences de la page 1.
+    Retourne la liste des expériences RESTANTES qui n'ont pas pu rentrer sur la page 1.
+    """
+    shapes = slide.shapes
+    experiences = cv_json.get("experience") or []
+    if not experiences:
+        return []
+
+    exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
+    exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
+
+    # Liste des conteneurs disponibles dans l'ordre d'affichage (Ex: Haut-Droite puis Gauche/Bas)
+    available_boxes = [box for box in [exp1_shape, exp2_shape] if box is not None]
+
+    exp_index = 0
+    num_experiences = len(experiences)
+
+    for box in available_boxes:
+        if exp_index >= num_experiences:
+            # Plus d'expériences à placer, on vide les boîtes restantes
+            box.text_frame.clear()
+            continue
+
+        box_capacity = _estimate_capacity_chars(box, font_pt=8)
+        current_box_exps = []
+        current_chars = 0
+
+        # On remplit cette boîte tant que la capacité le permet
+        while exp_index < num_experiences:
+            next_exp = experiences[exp_index]
+            exp_chars = _experience_char_count(next_exp)
+
+            # Si c'est la 1ère expérience de la boîte OU si elle rentre dans le budget
+            if not current_box_exps or (current_chars + exp_chars <= box_capacity):
+                current_box_exps.append(next_exp)
+                current_chars += exp_chars
+                exp_index += 1
+            else:
+                # La boîte est pleine, on arrête pour cette boîte
+                break
+
+        # Ecriture des expériences sélectionnées dans cette boîte
+        _write_experiences_into_shape(box, current_box_exps, with_spacer=True)
+
+    # On retourne les expériences qui n'ont pas tenu sur la page 1
+    return experiences[exp_index:]
