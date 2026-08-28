@@ -26,9 +26,8 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.oxml.ns import qn
 from pptx.util import Pt
-from sympy import exp
 
-import ast
+
 
 from .slide_duplication import duplicate_slide2
 
@@ -71,11 +70,7 @@ SLIDE2_SHAPES = {
     "photo": 16,
 }
 
-CHAR_BUDGET_PER_BOX = 650
-CHAR_BUDGET_PER_SLOT = 550
-MAX_BULLETS_PER_EXPERIENCE = 5
-MAX_CHARS_PER_BULLET = 220
-SKILLS_CHAR_BUDGET = 500
+
 SAFE_COLUMN_BOTTOM_EMU = 6300000
 
 #clean text:
@@ -156,16 +151,14 @@ def _experience_title_line(exp: dict) -> str:
 
 
 def _experience_bullets(exp: dict) -> list[str]:
-    print("EXP TYPE:", type(exp))
-    print("EXP VALUE:", exp)
+
     bullets = []
 
     responsibilities = exp.get("responsibilities") or []
 
     if responsibilities:
         for r in responsibilities:
-            print("RESP TYPE:", type(r))
-            print("RESP VALUE:", r)
+
             if isinstance(r, dict):
                 text = clean_value(
                     r.get("description") or r.get("category")
@@ -188,16 +181,7 @@ def _experience_char_count(exp: dict) -> int:
     return len(_experience_title_line(exp)) + sum(len(b) for b in _experience_bullets(exp))
 
 
-def _truncate_experience_for_display(exp: dict, char_budget: int) -> dict:
-    exp = dict(exp)
-    bullets = _experience_bullets(exp)[:MAX_BULLETS_PER_EXPERIENCE]
-    bullets = [
-        (b if len(b) <= MAX_CHARS_PER_BULLET else b[:MAX_CHARS_PER_BULLET].rstrip() + "…")
-        for b in bullets
-    ]
-    exp["responsibilities"] = [{"description": b} for b in bullets]
-    exp["description"] = ""
-    return exp
+
 
 
 def _paginate_by_char_budget(experiences: list[dict], budget_per_box: int) -> list[list[dict]]:
@@ -257,8 +241,7 @@ def _write_experiences_into_shape(shape, experiences: list[dict], with_spacer: b
             add_bullet_format(b_para)
 
 
-def fill_single_experience_shape(shape, exp: dict) -> None:
-    _write_experiences_into_shape(shape, [exp] if exp else [], with_spacer=False)
+
 
 
 def fill_multi_experience_shape(shape, experiences: list[dict]) -> None:
@@ -269,73 +252,10 @@ def fill_multi_experience_shape(shape, experiences: list[dict]) -> None:
 # Static sections
 # ---------------------------------------------------------------------------
 
-def fill_skills_shape_dynamic(slide, shape_id: int, skills: list[str], font_pt: float = 8) -> None:
-    """
-    Fills the skills shape with ALL skills (no truncation), then grows the
-    shape's height to fit the wrapped text and pushes every shape below it
-    down by the same amount. Same approach as fill_education_shape_dynamic.
-    """
-    shape = find_shape_by_id(slide.shapes, shape_id)
-    if shape is None:
-        return
-
-    tf = shape.text_frame
-    tf.clear()
-    clean = [str(s) for s in skills if s]
-    if not clean:
-        return
-
-    text = "  •  ".join(clean)
-    run = tf.paragraphs[0].add_run()
-    run.text = text
-    run.font.size = Pt(font_pt)
-
-    original_top = shape.top
-    original_height = shape.height
-    original_bottom = original_top + original_height
-
-    needed_height = _estimate_needed_height_emu([text], shape.width, font_pt)
-    new_height = max(original_height, needed_height)
-    delta = new_height - original_height
-
-    if delta <= 0:
-        return
-
-    shape.height = new_height
-
-    for other in slide.shapes:
-        if other.shape_id == shape_id:
-            continue
-        if other.top is None:
-            continue
-        if other.top >= original_bottom - 914400 // 20:
-            other.top = other.top + delta
 
 
-def fill_skills_shape(shape, skills: list[str]) -> None:
-    """One flowing line ('Python  •  SQL  •  ...') instead of one bullet per
-    skill. Truncated to SKILLS_CHAR_BUDGET -- past that, text overlaps the
-    Formation section below it (observed empirically)."""
-    tf = shape.text_frame
-    tf.clear()
-    clean = [str(s) for s in skills if s]
 
-    kept = []
-    running_len = 0
-    separator_len = len("  •  ")
-    for skill in clean:
-        added_len = len(skill) + (separator_len if kept else 0)
-        if running_len + added_len > SKILLS_CHAR_BUDGET:
-            break
-        kept.append(skill)
-        running_len += added_len
 
-    text = "  •  ".join(kept)
-    
-
-    run = tf.paragraphs[0].add_run()
-    run.text = text
-    run.font.size = Pt(8)
 
 #Estimates the vertical space (EMU) needed to display text_lines
 
@@ -351,34 +271,7 @@ def _estimate_needed_height_emu(text_lines: list[str], shape_width_emu: int, fon
 
     return int(total_lines * line_height_in * 914400)
 
-def fill_education_shape_dynamic(slide, shape_id: int, education: list[dict], font_pt: float = 7.5) -> None:
-    shape = find_shape_by_id(slide.shapes, shape_id)
-    if shape is None:
-        return
 
-    tf = shape.text_frame
-    tf.clear()
-    if not education:
-        return
-
-    lines = []
-    first = True
-    for edu in education:
-        parts = [p for p in (edu.get("degree"), edu.get("field_of_study"), edu.get("institution")) if p]
-        line = " - ".join(parts)
-        if edu.get("years"):
-            line = f"{line} ({edu['years']})" if line else str(edu["years"])
-        if not line:
-            continue
-        lines.append(line)
-        para = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        run = para.add_run()
-        run.text = line
-        run.font.size = Pt(font_pt)
-
-    if not lines:
-        return
 
     original_top = shape.top
     original_left = shape.left
@@ -387,8 +280,7 @@ def fill_education_shape_dynamic(slide, shape_id: int, education: list[dict], fo
 
     # Debug: dump every shape's left/top so we can see exactly why a given
     # shape does or doesn't qualify as "same column, below education".
-    for s in slide.shapes:
-        print(f"[DEBUG all-shapes] id={s.shape_id} left={s.left} top={s.top}")
+    
 
     needed_height = _estimate_needed_height_emu(lines, shape.width, font_pt)
     new_height = max(original_height, needed_height)
@@ -412,42 +304,11 @@ def fill_education_shape_dynamic(slide, shape_id: int, education: list[dict], fo
         if same_column and below_education:
             other.top = other.top + delta
             pushed += 1
-    print(f"[DEBUG education] pushed {pushed} shape(s) down by {delta} (column-filtered)")
+    
 
 
-def fill_education_shape(shape, education: list[dict], font_pt: float = 7.5) -> None:
-    capacity = _estimate_capacity_chars(shape, font_pt)
-    tf = shape.text_frame
-    tf.clear()
-    if not education:
-        return
-
-    first = True
-    used = 0
-    for edu in education:
-        parts = [p for p in (edu.get("degree"), edu.get("field_of_study"), edu.get("institution")) if p]
-        line = " - ".join(parts)
-        if edu.get("years"):
-            line = f"{line} ({edu['years']})" if line else str(edu["years"])
-        if not line:
-            continue
-
-        # Stop adding entries once the box's estimated capacity is exhausted --
-        # prevents a long education list from overflowing into the section below.
-        if used + len(line) > capacity and not first:
-            break
-
-        para = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        run = para.add_run()
-        run.text = line
-        run.font.size = Pt(font_pt)
-        used += len(line)
 
 
-# ---------------------------------------------------------------------------
-# Slide-level fill
-# ---------------------------------------------------------------------------
 
 
 def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
@@ -466,9 +327,7 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
 
     gap = 91440  # ~0.1 pouce d'espacement uniforme entre les blocs (ajustable)
 
-    # -----------------------------------------------------------------------
-    # 1. Remplissage & Calcul de la hauteur réelle de COMPÉTENCES
-    # -----------------------------------------------------------------------
+
     skills_text = ""
     skills_height = 0
     if skills_shape is not None:
@@ -485,9 +344,7 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
             skills_height = _estimate_needed_height_emu([skills_text], skills_shape.width, font_pt=8)
             skills_shape.height = skills_height
 
-    # -----------------------------------------------------------------------
-    # 2. Remplissage & Calcul de la hauteur réelle de FORMATION
-    # -----------------------------------------------------------------------
+
     education_lines = []
     education_height = 0
     if education_shape is not None:
@@ -514,9 +371,6 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
             education_height = _estimate_needed_height_emu(education_lines, education_shape.width, font_pt=7.5)
             education_shape.height = education_height
 
-    # -----------------------------------------------------------------------
-    # 3. REFLOW (Positionnement dynamique du haut vers le bas)
-    # -----------------------------------------------------------------------
     cursor = label_skills.top if label_skills is not None else 1167879
 
     # Positionnement Compétences
@@ -529,7 +383,6 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
         # Si pas de compétences, on cache/réduit le bloc
         skills_shape.height = 0
 
-    # Positionnement Formation
     if label_formation is not None:
         label_formation.top = cursor
         cursor = cursor + label_formation.height + (gap // 2)
@@ -539,16 +392,12 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
     elif education_shape is not None:
         education_shape.height = 0
 
-    # Positionnement Réalisations / Expérience 2 sur la colonne de gauche
     if label_realisations is not None:
         label_realisations.top = cursor
         cursor = cursor + label_realisations.height + (gap // 2)
     if exp2_shape is not None:
         exp2_shape.top = cursor
 
-    # -----------------------------------------------------------------------
-    # 4. Relocalisation de l'Expérience 2 à droite si la colonne déborde
-    # -----------------------------------------------------------------------
     if exp2_shape is not None and exp2_shape.top >= SAFE_COLUMN_BOTTOM_EMU:
         if exp1_shape is not None:
             exp2_shape.left = exp1_shape.left
