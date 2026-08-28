@@ -3,6 +3,15 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, ChevronDown, ChevronUp, AlertTriangle } from "lucide-react";
 import { getRankedExperiencesAndProjects } from "../api";
 import type { RankedResponse, ExperienceItem, ProjectItem, SelectionEntry } from "../types";
+import {
+  DndContext, closestCenter, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove, SortableContext, verticalListSortingStrategy, useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical } from "lucide-react";
 
 type SectionKey = "summary" | "skills" | "expertise_areas" | "functional_skills" | "education" | "languages" | "certifications" | "countries_worked" | "professional_affiliations" | "experience" | "projects";
 
@@ -56,8 +65,8 @@ function Section({
             <label
               key={("experience_index" in item ? item.experience_index : item.project_index).toString()}
               className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${selected.has("experience_index" in item ? item.experience_index : item.project_index)
-                  ? "border-red-200 bg-red-50"
-                  : "border-slate-200 bg-white hover:border-slate-300"
+                ? "border-red-200 bg-red-50"
+                : "border-slate-200 bg-white hover:border-slate-300"
                 }`}
             >
               <input
@@ -105,6 +114,59 @@ function StaticSection({
   );
 }
 
+function SortableRow({ id, label, sub }: { id: number; label: string; sub?: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
+      <button {...attributes} {...listeners} className="cursor-grab text-slate-400 hover:text-slate-600">
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium">{label}</p>
+        {sub && <p className="truncate text-xs text-slate-500">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+function OrderPanel({
+  title, order, itemsByIndex, onReorder,
+}: {
+  title: string;
+  order: number[];
+  itemsByIndex: Map<number, { label: string; sub?: string }>;
+  onReorder: (newOrder: number[]) => void;
+}) {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = order.indexOf(active.id as number);
+    const newIndex = order.indexOf(over.id as number);
+    onReorder(arrayMove(order, oldIndex, newIndex));
+  };
+
+  if (order.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <p className="mb-2 text-sm font-semibold">{title}</p>
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={order} strategy={verticalListSortingStrategy}>
+          <div className="space-y-2">
+            {order.map((idx) => {
+              const info = itemsByIndex.get(idx);
+              return <SortableRow key={idx} id={idx} label={info?.label ?? `#${idx}`} sub={info?.sub} />;
+            })}
+          </div>
+        </SortableContext>
+      </DndContext>
+    </div>
+  );
+}
+
 export function ReviewStep({
   selection,
   missionText,
@@ -123,6 +185,37 @@ export function ReviewStep({
   const [selections, setSelections] = useState<Record<string, { selected_experience_indices: number[]; selected_project_indices: number[] }>>({});
 
   const activeData = activeId ? data.get(activeId) : null;
+
+  const expByIndex = useMemo(() => {
+    const m = new Map<number, { label: string; sub?: string }>();
+    activeData?.experiences.forEach((e) => {
+      const raw = ("item" in e ? e.item : {}) as Record<string, unknown>;
+      m.set(e.experience_index, { label: String(raw.title || raw.name || ""), sub: String(raw.company || "") });
+    });
+    return m;
+  }, [activeData]);
+
+  const projByIndex = useMemo(() => {
+    const m = new Map<number, { label: string }>();
+    activeData?.projects.forEach((p) => {
+      const raw = ("item" in p ? p.item : {}) as Record<string, unknown>;
+      m.set(p.project_index, { label: String(raw.name || "") });
+    });
+    return m;
+  }, [activeData]);
+
+  const reorderSelection = useCallback(
+    (candidateId: string, kind: "experience" | "project", newOrder: number[]) => {
+      setSelections((prev) => {
+        const next = { ...prev };
+        const current = next[candidateId] || { selected_experience_indices: [], selected_project_indices: [] };
+        const key = kind === "experience" ? "selected_experience_indices" : "selected_project_indices";
+        next[candidateId] = { ...current, [key]: newOrder };
+        return next;
+      });
+    },
+    []
+  );
 
   const loadForCandidate = async (candidateId: string): Promise<void> => {
     if (data.has(candidateId)) {
@@ -232,8 +325,8 @@ export function ReviewStep({
             key={s.candidate_id}
             onClick={() => loadForCandidate(s.candidate_id)}
             className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${activeId === s.candidate_id
-                ? "border-[#C1121F] bg-red-50 text-[#C1121F]"
-                : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+              ? "border-[#C1121F] bg-red-50 text-[#C1121F]"
+              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
               }`}
           >
             {s.name}
@@ -286,22 +379,38 @@ export function ReviewStep({
               <p className="font-semibold">Mission text</p>
               <p className="mt-1 line-clamp-4">{missionText}</p>
             </div>
+            {activeId && (
+              <>
+                <OrderPanel
+                  title="Ordre des expériences (glisser pour réordonner)"
+                  order={selections[activeId]?.selected_experience_indices || []}
+                  itemsByIndex={expByIndex}
+                  onReorder={(newOrder) => reorderSelection(activeId, "experience", newOrder)}
+                />
+                <OrderPanel
+                  title="Ordre des projets (glisser pour réordonner)"
+                  order={selections[activeId]?.selected_project_indices || []}
+                  itemsByIndex={projByIndex}
+                  onReorder={(newOrder) => reorderSelection(activeId, "project", newOrder)}
+                />
+              </>
+            )}
           </div>
         </div>
       )}
 
-      <div className="mt-6 flex items-center justify-between">
-        <button onClick={onBack} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold hover:bg-slate-50">
-          Back
-        </button>
-        <button
-          onClick={() => onGenerate(selections)}
-          disabled={!activeId || Object.keys(selections).length === 0}
-          className="rounded-xl bg-[#C1121F] px-5 py-2.5 text-sm font-bold text-white disabled:opacity-70"
-        >
-          Generate Adapted CV
-        </button>
-      </div>
-    </section>
+<div className="mt-6 flex items-center justify-between">
+  <button onClick={onBack} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold hover:bg-slate-50">
+    Back
+  </button>
+  <button
+    onClick={() => onGenerate(selections)}
+    disabled={!activeId || Object.keys(selections).length === 0}
+    className="rounded-xl bg-[#C1121F] px-5 py-2.5 text-sm font-bold text-white disabled:opacity-70"
+  >
+    Generate Adapted CV
+  </button>
+</div>
+    </section >
   );
 }

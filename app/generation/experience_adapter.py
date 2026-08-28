@@ -88,17 +88,25 @@ def _check_technology_fidelity(original_technologies: list[str], adapted_text: s
 
 
 def adapt_selected_experiences(
-    experiences: list[dict], mission_text: str, target_language: str = "English"
+    experiences: list[dict],
+    mission_text: str,
+    target_language: str = "English"
 ) -> dict[int, dict]:
     """
     experiences: list of full experience dicts (as stored in merged_candidates),
-    each expected to carry its own "experience_index" (attach it before calling
-    if not already present -- see build_matched_cv_json's resolved items).
+    each expected to carry its own "experience_index".
 
-    Returns {experience_index: {"description": str, "responsibilities": list[dict]}}
-    for every experience successfully adapted. Items that fail to parse are
-    silently skipped (original text should be used as fallback by the caller).
+    Returns:
+        {
+            experience_index: {
+                "description": str,
+                "responsibilities": list[dict]
+            }
+        }
+
+    The returned dict preserves the same order as the input experiences list.
     """
+
     if not experiences:
         return {}
 
@@ -113,37 +121,74 @@ def adapt_selected_experiences(
         for exp in experiences
     ]
 
-    prompt = _build_prompt(items, mission_text, target_language, item_kind="experience")
+    prompt = _build_prompt(
+        items,
+        mission_text,
+        target_language,
+        item_kind="experience",
+    )
 
     response = client.models.generate_content(
         model=MODEL_NAME,
         contents=prompt,
-        config={"response_mime_type": "application/json", "max_output_tokens": 4000},
+        config={
+            "response_mime_type": "application/json",
+            "max_output_tokens": 4000,
+        },
     )
+
     data = _parse_response(response, key="adapted_items")
 
-    result = {}
+    # Stockage temporaire sans se soucier de l'ordre
+    adapted_by_idx = {}
+
     for adapted in data.get("adapted_items", []):
         if not isinstance(adapted, dict) or "index" not in adapted:
             continue
+
         idx = adapted["index"]
-        result[idx] = {
+
+        adapted_by_idx[idx] = {
             "description": adapted.get("adapted_description", ""),
-            "responsibilities": adapted.get("adapted_responsibilities", []),
+            "responsibilities": adapted.get(
+                "adapted_responsibilities", []
+            ),
         }
 
-        # Fidelity check (log only, doesn't block or auto-correct)
-        original = next((e for e in experiences if e["experience_index"] == idx), None)
+        # Fidelity check
+        original = next(
+            (
+                e
+                for e in experiences
+                if e["experience_index"] == idx
+            ),
+            None,
+        )
+
         if original:
             missing = _check_technology_fidelity(
-                original.get("technologies") or [], result[idx]["description"]
+                original.get("technologies") or [],
+                adapted_by_idx[idx]["description"],
             )
+
             if missing:
-                print(f"[experience_adapter] WARNING exp_index={idx}: "
-                      f"technologies present in original but not in adapted text: {missing}")
+                print(
+                    f"[experience_adapter] WARNING exp_index={idx}: "
+                    f"technologies present in original but not in adapted text: {missing}"
+                )
+
+    # Reconstruction dans l'ordre EXACT de la liste d'entrée
+    ordered_result = {}
+
+    for exp in experiences:
+        idx = exp["experience_index"]
+
+        if idx in adapted_by_idx:
+            ordered_result[idx] = adapted_by_idx[idx]
 
     time.sleep(1)
-    return result
+
+    return ordered_result
 
 
 def adapt_selected_projects(

@@ -39,6 +39,7 @@ INVALID_VALUES = {
     "not specified",
     "not available",
     "unknown",
+    'Unknown'
     "none",
     "-",
     "--",
@@ -57,11 +58,16 @@ TEMPLATE_PATH = PROJECT_ROOT / "Templates" / "Template_CV_format_DVT.pptx"
 
 SLIDE1_SHAPES = {
     "name": 869, "summary": 870, "years": 872, "title": 877,
-    "education": 879, "skills": 881, "exp1": 882, "exp2": 887,
+    "education": 879, "skills": 881, "exp1": 887, "exp2": 882,
     "photo": 2,
 }
 SLIDE2_SHAPES = {
-    "name": 11, "title": 15, "exp_box_a": 3, "exp_box_b": 5,
+    "name": 11,
+    "title": 15,
+    "years": 12,    
+    "summary": 7,   
+    "exp_box_a": 3,
+    "exp_box_b": 5,
     "photo": 16,
 }
 
@@ -211,20 +217,39 @@ def _paginate_by_char_budget(experiences: list[dict], budget_per_box: int) -> li
 
 
 def _write_experiences_into_shape(shape, experiences: list[dict], with_spacer: bool = False) -> None:
-    tf = shape.text_frame
-    tf.clear()  # leaves ONE empty paragraph
-    first = True
-    for exp in experiences:
-        if with_spacer and not first:
-            tf.add_paragraph()  # blank spacer between stacked experiences
-        para = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        run = para.add_run()
-        run.text = _experience_title_line(exp)
-        run.font.bold = True
-        run.font.size = Pt(8)
+    if shape is None:
+        return
 
-        for bullet_text in _experience_bullets(exp):
+    tf = shape.text_frame
+    tf.clear()  # Efface le texte mais laisse 1 paragraphe vide à l'index 0
+
+    # On récupère les bullets une seule fois par expérience
+    first_exp = True
+
+    for exp in experiences:
+        bullets = _experience_bullets(exp)
+        title_text = _experience_title_line(exp)
+
+        # Si ce n'est pas la toute première expérience et qu'on veut un espacement
+        if with_spacer and not first_exp:
+            spacer_para = tf.add_paragraph()
+            spacer_para.text = ""
+
+        # Titre de l'expérience
+        if first_exp:
+            para = tf.paragraphs[0]
+            first_exp = False
+        else:
+            para = tf.add_paragraph()
+
+        if title_text:
+            run = para.add_run()
+            run.text = title_text
+            run.font.bold = True
+            run.font.size = Pt(8)
+
+        # Puces de l'expérience
+        for bullet_text in bullets:
             b_para = tf.add_paragraph()
             b_run = b_para.add_run()
             b_run.text = bullet_text
@@ -536,15 +561,19 @@ def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> None:
     )
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["summary"]), cv_json.get("summary") or "")
 
-    _fill_left_column_dynamic(slide, cv_json)  # skills + education + exp2 relocation
-
+    # 1. Remplir D'ABORD les contenus des expériences
     experiences = cv_json.get("experience") or []
     exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
     exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
+    
     exp1 = experiences[0] if len(experiences) > 0 else {}
     exp2 = experiences[1] if len(experiences) > 1 else {}
+    
     fill_single_experience_shape(exp1_shape, exp1)
     fill_single_experience_shape(exp2_shape, exp2)
+
+    # 2. Repositionner dynamiquement la colonne de gauche (skills, edu, exp2) APRÈS le remplissage
+    _fill_left_column_dynamic(slide, cv_json)
 
     photo = find_shape_by_id(shapes, SLIDE1_SHAPES["photo"])
     if photo is not None:
@@ -570,11 +599,26 @@ def _get_slide2_box_capacities(template_path) -> tuple[int, int]:
     )
 
 
-def fill_slide2_page(slide, cv_json: dict, boxes: list[list[dict]]) -> None:
+def fill_slide2_page(slide, cv_json: dict, boxes: list[list[dict]], target_language: str = "French") -> None:
     shapes = slide.shapes
+    
+    # 1. Nom & Titre
     set_single_run_text(find_shape_by_id(shapes, SLIDE2_SHAPES["name"]), cv_json.get("name") or "")
     set_single_run_text(find_shape_by_id(shapes, SLIDE2_SHAPES["title"]), cv_json.get("title") or "")
 
+    # 2. Années d'expérience
+    years = cv_json.get("years_of_experience")
+    label = YEARS_LABEL.get(target_language, YEARS_LABEL["French"])
+    years_shape = find_shape_by_id(shapes, SLIDE2_SHAPES["years"])
+    if years_shape:
+        set_single_run_text(years_shape, f"{years} {label}" if years else "")
+
+    # 3. Résumé / Summary
+    summary_shape = find_shape_by_id(shapes, SLIDE2_SHAPES["summary"])
+    if summary_shape:
+        set_single_run_text(summary_shape, cv_json.get("summary") or "")
+
+    # 4. Expériences & Photo
     box_a = find_shape_by_id(shapes, SLIDE2_SHAPES["exp_box_a"])
     box_b = find_shape_by_id(shapes, SLIDE2_SHAPES["exp_box_b"])
     fill_multi_experience_shape(box_a, boxes[0] if len(boxes) > 0 else [])
@@ -631,9 +675,9 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
     fill_slide1(prs.slides[0], cv_json, target_language)
 
     if pages:
-        fill_slide2_page(prs.slides[1], cv_json, pages[0])
+        fill_slide2_page(prs.slides[1], cv_json, pages[0], target_language=target_language)
         for i, page in enumerate(pages[1:], start=2):
-            fill_slide2_page(prs.slides[i], cv_json, page)
+            fill_slide2_page(prs.slides[i], cv_json, page, target_language=target_language)
     else:
         _remove_slide(prs, index=1)
 

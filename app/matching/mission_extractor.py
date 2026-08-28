@@ -62,6 +62,12 @@ Rules:
   If the text mentions a certification NOT in this list, extract it as written.
 - If seniority is not stated or implied (e.g. via years of experience mentioned), return null.
 - domain must be picked from the closed list, using "Other" if none fit.
+Return ONLY ONE JSON OBJECT.
+
+The root element must be a JSON object.
+Never return a JSON array.
+Never return multiple alternatives.
+If the input contains multiple possible interpretations, choose the single most likely interpretation.
 
 Mission description:
 \"\"\"
@@ -134,4 +140,5 @@ def extract_mission_structure(
     """
     prompt = build_extraction_prompt(mission_text, known_certifications)
     raw_response = llm_client.generate(prompt)
+    print(raw_response)
     return parse_mission_extraction(raw_response, mission_text)

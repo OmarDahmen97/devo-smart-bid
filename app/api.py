@@ -29,6 +29,7 @@ import shutil
 import tempfile
 import os
 from bson import ObjectId
+from requests import request
 
 from app.services.candidate_service import CandidateService
 from app.extraction.pipeline import extract_and_store_cv
@@ -400,22 +401,22 @@ async def generate_adapted_cv_json(candidate_id: str, request: CustomSelectionAd
                 result[section] = candidate[section]
 
         # Récupération et préparation des expériences choisies
-        sel_exp_indices = set(request.selected_experience_indices or [])
+        sel_exp_indices = request.selected_experience_indices or []
         raw_exp_list = candidate.get("experience") or []
         selected_exps = []
-        for idx, exp in enumerate(raw_exp_list):
-            if idx in sel_exp_indices:
-                item = dict(exp)
+        for idx in sel_exp_indices:
+            if 0 <= idx < len(raw_exp_list):
+                item = dict(raw_exp_list[idx])
                 item["experience_index"] = idx
                 selected_exps.append(item)
 
         # Récupération et préparation des projets choisis
-        sel_proj_indices = set(request.selected_project_indices or [])
+        sel_proj_indices = request.selected_project_indices or []
         raw_proj_list = candidate.get("projects") or []
         selected_projs = []
-        for idx, proj in enumerate(raw_proj_list):
-            if idx in sel_proj_indices:
-                item = dict(proj)
+        for idx in sel_proj_indices:
+            if 0 <= idx < len(raw_proj_list):
+                item = dict(raw_proj_list[idx])
                 item["project_index"] = idx
                 selected_projs.append(item)
 

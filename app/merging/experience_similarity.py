@@ -34,7 +34,7 @@ def _get_embedder():
     return get_shared_embedder()
 
 
-# ---- lightweight company prefilter (no fuzzy library dependency) ----
+# ---- lightweight company prefilter ----
 
 NULL_LIKE_VALUES = {
     "", None, "null",
@@ -76,10 +76,10 @@ def _companies_plausibly_match(raw_a: str | None, raw_b: str | None, threshold: 
     tokens_a = set(a.split())
     tokens_b = set(b.split())
 
-    if tokens_a & tokens_b:  # Shared word (e.g., "devoteam")
+    if tokens_a & tokens_b:  # Shared word 
         return True
 
-    # 3. Fuzzy ratio on full string (captures typos e.g., "devoteam" vs "devoteam")
+    # 3. Fuzzy ratio on full string 
     ratio = fuzz.token_set_ratio(a, b)/100
     if ratio >= threshold:
         return True
