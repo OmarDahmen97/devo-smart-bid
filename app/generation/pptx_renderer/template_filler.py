@@ -26,9 +26,8 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.oxml.ns import qn
 from pptx.util import Pt
-from sympy import exp
 
-import ast
+
 
 from .slide_duplication import duplicate_slide2
 
@@ -39,6 +38,7 @@ INVALID_VALUES = {
     "not specified",
     "not available",
     "unknown",
+    'Unknown'
     "none",
     "-",
     "--",
@@ -57,19 +57,20 @@ TEMPLATE_PATH = PROJECT_ROOT / "Templates" / "Template_CV_format_DVT.pptx"
 
 SLIDE1_SHAPES = {
     "name": 869, "summary": 870, "years": 872, "title": 877,
-    "education": 879, "skills": 881, "exp1": 882, "exp2": 887,
+    "education": 879, "skills": 881, "exp1": 887, "exp2": 882,
     "photo": 2,
 }
 SLIDE2_SHAPES = {
-    "name": 11, "title": 15, "exp_box_a": 3, "exp_box_b": 5,
+    "name": 11,
+    "title": 15,
+    "years": 12,    
+    "summary": 7,   
+    "exp_box_a": 3,
+    "exp_box_b": 5,
     "photo": 16,
 }
 
-CHAR_BUDGET_PER_BOX = 650
-CHAR_BUDGET_PER_SLOT = 550
-MAX_BULLETS_PER_EXPERIENCE = 5
-MAX_CHARS_PER_BULLET = 220
-SKILLS_CHAR_BUDGET = 500
+
 SAFE_COLUMN_BOTTOM_EMU = 6300000
 
 #clean text:
@@ -150,16 +151,14 @@ def _experience_title_line(exp: dict) -> str:
 
 
 def _experience_bullets(exp: dict) -> list[str]:
-    print("EXP TYPE:", type(exp))
-    print("EXP VALUE:", exp)
+
     bullets = []
 
     responsibilities = exp.get("responsibilities") or []
 
     if responsibilities:
         for r in responsibilities:
-            print("RESP TYPE:", type(r))
-            print("RESP VALUE:", r)
+
             if isinstance(r, dict):
                 text = clean_value(
                     r.get("description") or r.get("category")
@@ -182,16 +181,7 @@ def _experience_char_count(exp: dict) -> int:
     return len(_experience_title_line(exp)) + sum(len(b) for b in _experience_bullets(exp))
 
 
-def _truncate_experience_for_display(exp: dict, char_budget: int) -> dict:
-    exp = dict(exp)
-    bullets = _experience_bullets(exp)[:MAX_BULLETS_PER_EXPERIENCE]
-    bullets = [
-        (b if len(b) <= MAX_CHARS_PER_BULLET else b[:MAX_CHARS_PER_BULLET].rstrip() + "…")
-        for b in bullets
-    ]
-    exp["responsibilities"] = [{"description": b} for b in bullets]
-    exp["description"] = ""
-    return exp
+
 
 
 def _paginate_by_char_budget(experiences: list[dict], budget_per_box: int) -> list[list[dict]]:
@@ -211,20 +201,39 @@ def _paginate_by_char_budget(experiences: list[dict], budget_per_box: int) -> li
 
 
 def _write_experiences_into_shape(shape, experiences: list[dict], with_spacer: bool = False) -> None:
-    tf = shape.text_frame
-    tf.clear()  # leaves ONE empty paragraph
-    first = True
-    for exp in experiences:
-        if with_spacer and not first:
-            tf.add_paragraph()  # blank spacer between stacked experiences
-        para = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        run = para.add_run()
-        run.text = _experience_title_line(exp)
-        run.font.bold = True
-        run.font.size = Pt(8)
+    if shape is None:
+        return
 
-        for bullet_text in _experience_bullets(exp):
+    tf = shape.text_frame
+    tf.clear()  # Efface le texte mais laisse 1 paragraphe vide à l'index 0
+
+    # On récupère les bullets une seule fois par expérience
+    first_exp = True
+
+    for exp in experiences:
+        bullets = _experience_bullets(exp)
+        title_text = _experience_title_line(exp)
+
+        # Si ce n'est pas la toute première expérience et qu'on veut un espacement
+        if with_spacer and not first_exp:
+            spacer_para = tf.add_paragraph()
+            spacer_para.text = ""
+
+        # Titre de l'expérience
+        if first_exp:
+            para = tf.paragraphs[0]
+            first_exp = False
+        else:
+            para = tf.add_paragraph()
+
+        if title_text:
+            run = para.add_run()
+            run.text = title_text
+            run.font.bold = True
+            run.font.size = Pt(8)
+
+        # Puces de l'expérience
+        for bullet_text in bullets:
             b_para = tf.add_paragraph()
             b_run = b_para.add_run()
             b_run.text = bullet_text
@@ -232,8 +241,7 @@ def _write_experiences_into_shape(shape, experiences: list[dict], with_spacer: b
             add_bullet_format(b_para)
 
 
-def fill_single_experience_shape(shape, exp: dict) -> None:
-    _write_experiences_into_shape(shape, [exp] if exp else [], with_spacer=False)
+
 
 
 def fill_multi_experience_shape(shape, experiences: list[dict]) -> None:
@@ -244,73 +252,10 @@ def fill_multi_experience_shape(shape, experiences: list[dict]) -> None:
 # Static sections
 # ---------------------------------------------------------------------------
 
-def fill_skills_shape_dynamic(slide, shape_id: int, skills: list[str], font_pt: float = 8) -> None:
-    """
-    Fills the skills shape with ALL skills (no truncation), then grows the
-    shape's height to fit the wrapped text and pushes every shape below it
-    down by the same amount. Same approach as fill_education_shape_dynamic.
-    """
-    shape = find_shape_by_id(slide.shapes, shape_id)
-    if shape is None:
-        return
-
-    tf = shape.text_frame
-    tf.clear()
-    clean = [str(s) for s in skills if s]
-    if not clean:
-        return
-
-    text = "  •  ".join(clean)
-    run = tf.paragraphs[0].add_run()
-    run.text = text
-    run.font.size = Pt(font_pt)
-
-    original_top = shape.top
-    original_height = shape.height
-    original_bottom = original_top + original_height
-
-    needed_height = _estimate_needed_height_emu([text], shape.width, font_pt)
-    new_height = max(original_height, needed_height)
-    delta = new_height - original_height
-
-    if delta <= 0:
-        return
-
-    shape.height = new_height
-
-    for other in slide.shapes:
-        if other.shape_id == shape_id:
-            continue
-        if other.top is None:
-            continue
-        if other.top >= original_bottom - 914400 // 20:
-            other.top = other.top + delta
 
 
-def fill_skills_shape(shape, skills: list[str]) -> None:
-    """One flowing line ('Python  •  SQL  •  ...') instead of one bullet per
-    skill. Truncated to SKILLS_CHAR_BUDGET -- past that, text overlaps the
-    Formation section below it (observed empirically)."""
-    tf = shape.text_frame
-    tf.clear()
-    clean = [str(s) for s in skills if s]
 
-    kept = []
-    running_len = 0
-    separator_len = len("  •  ")
-    for skill in clean:
-        added_len = len(skill) + (separator_len if kept else 0)
-        if running_len + added_len > SKILLS_CHAR_BUDGET:
-            break
-        kept.append(skill)
-        running_len += added_len
 
-    text = "  •  ".join(kept)
-    
-
-    run = tf.paragraphs[0].add_run()
-    run.text = text
-    run.font.size = Pt(8)
 
 #Estimates the vertical space (EMU) needed to display text_lines
 
@@ -326,34 +271,7 @@ def _estimate_needed_height_emu(text_lines: list[str], shape_width_emu: int, fon
 
     return int(total_lines * line_height_in * 914400)
 
-def fill_education_shape_dynamic(slide, shape_id: int, education: list[dict], font_pt: float = 7.5) -> None:
-    shape = find_shape_by_id(slide.shapes, shape_id)
-    if shape is None:
-        return
 
-    tf = shape.text_frame
-    tf.clear()
-    if not education:
-        return
-
-    lines = []
-    first = True
-    for edu in education:
-        parts = [p for p in (edu.get("degree"), edu.get("field_of_study"), edu.get("institution")) if p]
-        line = " - ".join(parts)
-        if edu.get("years"):
-            line = f"{line} ({edu['years']})" if line else str(edu["years"])
-        if not line:
-            continue
-        lines.append(line)
-        para = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        run = para.add_run()
-        run.text = line
-        run.font.size = Pt(font_pt)
-
-    if not lines:
-        return
 
     original_top = shape.top
     original_left = shape.left
@@ -362,8 +280,7 @@ def fill_education_shape_dynamic(slide, shape_id: int, education: list[dict], fo
 
     # Debug: dump every shape's left/top so we can see exactly why a given
     # shape does or doesn't qualify as "same column, below education".
-    for s in slide.shapes:
-        print(f"[DEBUG all-shapes] id={s.shape_id} left={s.left} top={s.top}")
+    
 
     needed_height = _estimate_needed_height_emu(lines, shape.width, font_pt)
     new_height = max(original_height, needed_height)
@@ -387,56 +304,17 @@ def fill_education_shape_dynamic(slide, shape_id: int, education: list[dict], fo
         if same_column and below_education:
             other.top = other.top + delta
             pushed += 1
-    print(f"[DEBUG education] pushed {pushed} shape(s) down by {delta} (column-filtered)")
+    
 
 
-def fill_education_shape(shape, education: list[dict], font_pt: float = 7.5) -> None:
-    capacity = _estimate_capacity_chars(shape, font_pt)
-    tf = shape.text_frame
-    tf.clear()
-    if not education:
-        return
-
-    first = True
-    used = 0
-    for edu in education:
-        parts = [p for p in (edu.get("degree"), edu.get("field_of_study"), edu.get("institution")) if p]
-        line = " - ".join(parts)
-        if edu.get("years"):
-            line = f"{line} ({edu['years']})" if line else str(edu["years"])
-        if not line:
-            continue
-
-        # Stop adding entries once the box's estimated capacity is exhausted --
-        # prevents a long education list from overflowing into the section below.
-        if used + len(line) > capacity and not first:
-            break
-
-        para = tf.paragraphs[0] if first else tf.add_paragraph()
-        first = False
-        run = para.add_run()
-        run.text = line
-        run.font.size = Pt(font_pt)
-        used += len(line)
 
 
-# ---------------------------------------------------------------------------
-# Slide-level fill
-# ---------------------------------------------------------------------------
 
 
 def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
     """
-    Rebuilds the entire left column's vertical flow from scratch, instead of
-    trusting the template's original box heights/positions (which are
-    oversized placeholders relying on short text -- Formation's label (874)
-    sits ABOVE skills' (881) own declared bottom edge even in the untouched
-    template, so "push whatever is below original_bottom" is not a valid
-    strategy here).
-
-    Order (top to bottom, confirmed from template geometry): Compétences
-    label (883) -> skills content (881) -> Formation label (874) ->
-    education content (879) -> Réalisations label (885) -> exp2 block (887).
+    Recalcule la position verticale (top) de chaque section de la colonne de gauche
+    en se basant UNIQUEMENT sur la hauteur réelle du texte injecté.
     """
     shapes = slide.shapes
     label_skills = find_shape_by_id(shapes, 883)
@@ -447,10 +325,11 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
     exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
     exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
 
-    gap = 45720  # ~0.05in between stacked blocks
+    gap = 91440  # ~0.1 pouce d'espacement uniforme entre les blocs (ajustable)
 
-    # --- Fill skills content, compute its real needed height ---
+
     skills_text = ""
+    skills_height = 0
     if skills_shape is not None:
         skills = cv_json.get("skills") or []
         tf = skills_shape.text_frame
@@ -461,14 +340,13 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
             run = tf.paragraphs[0].add_run()
             run.text = skills_text
             run.font.size = Pt(8)
-    skills_height = (
-        max(skills_shape.height, _estimate_needed_height_emu([skills_text], skills_shape.width, 8))
-        if skills_shape is not None and skills_text else
-        (skills_shape.height if skills_shape is not None else 0)
-    )
+            # Calcul de la hauteur exacte requise par le texte (sans plancher sur la hauteur d'origine)
+            skills_height = _estimate_needed_height_emu([skills_text], skills_shape.width, font_pt=8)
+            skills_shape.height = skills_height
 
-    # --- Fill education content, compute its real needed height ---
+
     education_lines = []
+    education_height = 0
     if education_shape is not None:
         education = cv_json.get("education") or []
         tf = education_shape.text_frame
@@ -487,44 +365,49 @@ def _fill_left_column_dynamic(slide, cv_json: dict) -> None:
             run = para.add_run()
             run.text = line
             run.font.size = Pt(7.5)
-    education_height = (
-        max(education_shape.height, _estimate_needed_height_emu(education_lines, education_shape.width, 7.5))
-        if education_shape is not None and education_lines else
-        (education_shape.height if education_shape is not None else 0)
-    )
+            
+        if education_lines:
+            # Calcul de la hauteur exacte requise par toutes les lignes de formation
+            education_height = _estimate_needed_height_emu(education_lines, education_shape.width, font_pt=7.5)
+            education_shape.height = education_height
 
-    # --- Reflow: place each block right after the previous one's real height ---
     cursor = label_skills.top if label_skills is not None else 1167879
 
+    # Positionnement Compétences
     if label_skills is not None:
-        cursor = label_skills.top + label_skills.height + gap
-    if skills_shape is not None:
+        cursor = label_skills.top + label_skills.height + (gap // 2)
+    if skills_shape is not None and skills_height > 0:
         skills_shape.top = cursor
         cursor = cursor + skills_height + gap
+    elif skills_shape is not None:
+        # Si pas de compétences, on cache/réduit le bloc
+        skills_shape.height = 0
 
     if label_formation is not None:
         label_formation.top = cursor
-        cursor = cursor + label_formation.height + gap
-    if education_shape is not None:
+        cursor = cursor + label_formation.height + (gap // 2)
+    if education_shape is not None and education_height > 0:
         education_shape.top = cursor
         cursor = cursor + education_height + gap
+    elif education_shape is not None:
+        education_shape.height = 0
 
     if label_realisations is not None:
         label_realisations.top = cursor
-        cursor = cursor + label_realisations.height + gap
+        cursor = cursor + label_realisations.height + (gap // 2)
     if exp2_shape is not None:
         exp2_shape.top = cursor
 
-    # --- Relocate exp2 to the right column if the left column ran out of room ---
     if exp2_shape is not None and exp2_shape.top >= SAFE_COLUMN_BOTTOM_EMU:
-        print(f"[layout] exp2 top={exp2_shape.top} exceeds safe bottom -- relocating to second column")
         if exp1_shape is not None:
             exp2_shape.left = exp1_shape.left
-            exp2_shape.top = exp1_shape.top + exp1_shape.height + 91440
+            exp2_shape.top = exp1_shape.top + exp1_shape.height + gap
 
 
-def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> None:
+def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> list[dict]:
     shapes = slide.shapes
+    
+    # 1. Champs statiques
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["name"]), cv_json.get("name") or "")
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["title"]), cv_json.get("title") or "")
 
@@ -536,19 +419,18 @@ def fill_slide1(slide, cv_json: dict, target_language: str = "French") -> None:
     )
     set_single_run_text(find_shape_by_id(shapes, SLIDE1_SHAPES["summary"]), cv_json.get("summary") or "")
 
-    _fill_left_column_dynamic(slide, cv_json)  # skills + education + exp2 relocation
+    # 2. Reflow dynamique de la colonne de gauche (skills & education adaptent leur hauteur)
+    _fill_left_column_dynamic(slide, cv_json)
 
-    experiences = cv_json.get("experience") or []
-    exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
-    exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
-    exp1 = experiences[0] if len(experiences) > 0 else {}
-    exp2 = experiences[1] if len(experiences) > 1 else {}
-    fill_single_experience_shape(exp1_shape, exp1)
-    fill_single_experience_shape(exp2_shape, exp2)
+    # 3. Remplissage dynamique des expériences + Retour des expériences restantes pour le slide 2
+    remaining_experiences = _fill_experiences_dynamically(slide, cv_json)
 
+    # Supprimer la photo exemple
     photo = find_shape_by_id(shapes, SLIDE1_SHAPES["photo"])
     if photo is not None:
         remove_shape(photo)
+
+    return remaining_experiences
    
     
 
@@ -570,11 +452,26 @@ def _get_slide2_box_capacities(template_path) -> tuple[int, int]:
     )
 
 
-def fill_slide2_page(slide, cv_json: dict, boxes: list[list[dict]]) -> None:
+def fill_slide2_page(slide, cv_json: dict, boxes: list[list[dict]], target_language: str = "French") -> None:
     shapes = slide.shapes
+    
+    # 1. Nom & Titre
     set_single_run_text(find_shape_by_id(shapes, SLIDE2_SHAPES["name"]), cv_json.get("name") or "")
     set_single_run_text(find_shape_by_id(shapes, SLIDE2_SHAPES["title"]), cv_json.get("title") or "")
 
+    # 2. Années d'expérience
+    years = cv_json.get("years_of_experience")
+    label = YEARS_LABEL.get(target_language, YEARS_LABEL["French"])
+    years_shape = find_shape_by_id(shapes, SLIDE2_SHAPES["years"])
+    if years_shape:
+        set_single_run_text(years_shape, f"{years} {label}" if years else "")
+
+    # 3. Résumé / Summary
+    summary_shape = find_shape_by_id(shapes, SLIDE2_SHAPES["summary"])
+    if summary_shape:
+        set_single_run_text(summary_shape, cv_json.get("summary") or "")
+
+    # 4. Expériences & Photo
     box_a = find_shape_by_id(shapes, SLIDE2_SHAPES["exp_box_a"])
     box_b = find_shape_by_id(shapes, SLIDE2_SHAPES["exp_box_b"])
     fill_multi_experience_shape(box_a, boxes[0] if len(boxes) > 0 else [])
@@ -601,6 +498,7 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
     workdir = Path("/tmp") / f"pptx_render_{uuid.uuid4().hex}"
     box_a_capacity, box_b_capacity = _get_slide2_box_capacities(TEMPLATE_PATH)
     per_box_budget = min(box_a_capacity, box_b_capacity)
+    
     if workdir.exists():
         shutil.rmtree(workdir)
     workdir.mkdir(parents=True)
@@ -608,16 +506,20 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
     with zipfile.ZipFile(TEMPLATE_PATH) as z:
         z.extractall(workdir)
 
-    # 1. Compute pagination BEFORE touching python-pptx.
-    experiences = cv_json.get("experience") or []
-    remaining = experiences[2:]
-    boxes = _paginate_by_char_budget(remaining, per_box_budget)
-    # No "or [[]]" fallback -- an empty pages list means slide 2 isn't needed at all.
+    # Charger le document d'abord pour remplir slide 1 et calculer la suite
+    prs_temp = Presentation(TEMPLATE_PATH)
+    
+    # 1. Remplir le slide 1 et récupérer EXACTEMENT les expériences non casées
+    remaining_experiences = fill_slide1(prs_temp.slides[0], cv_json, target_language)
+
+    # 2. Pagination de Slide 2 basée uniquement sur le surplus réel
+    boxes = _paginate_by_char_budget(remaining_experiences, per_box_budget)
     pages = [boxes[i:i + 2] for i in range(0, len(boxes), 2)]
 
+    # 3. Duplication XML des slides si nécessaire
     extra_slide_paths = [duplicate_slide2(workdir) for _ in pages[1:]]
 
-    # 3. Rezip into an intermediate file, then open it with python-pptx.
+    # Re-zipper et traiter le document final
     intermediate_path = workdir.parent / f"{workdir.name}_intermediate.pptx"
     with zipfile.ZipFile(intermediate_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file in workdir.rglob("*"):
@@ -626,23 +528,20 @@ def render_cv_pptx(cv_json: dict, output_path: str, target_language: str = "Fren
 
     prs = Presentation(str(intermediate_path))
 
-    # slides[0] = slide1, slides[1] = slide2, slides[2:] = duplicated pages,
-    # in the same order they were added to sldIdLst.
+    # Appliquer le remplissage sur le fichier final
     fill_slide1(prs.slides[0], cv_json, target_language)
 
     if pages:
-        fill_slide2_page(prs.slides[1], cv_json, pages[0])
+        fill_slide2_page(prs.slides[1], cv_json, pages[0], target_language=target_language)
         for i, page in enumerate(pages[1:], start=2):
-            fill_slide2_page(prs.slides[i], cv_json, page)
+            fill_slide2_page(prs.slides[i], cv_json, page, target_language=target_language)
     else:
         _remove_slide(prs, index=1)
 
     prs.save(output_path)
-
     shutil.rmtree(workdir)
     intermediate_path.unlink()
     return output_path
-
 #Rough estimate of how many characters fit in a shape's text box
 def _estimate_capacity_chars(shape, font_pt: float = 8) -> int:   
     if shape is None or not shape.width or not shape.height:
@@ -659,3 +558,51 @@ def _estimate_capacity_chars(shape, font_pt: float = 8) -> int:
 
     return int(chars_per_line * num_lines)
 
+def _fill_experiences_dynamically(slide, cv_json: dict) -> list[dict]:
+    """
+    Remplis dynamiquement les zones d'expériences de la page 1.
+    Retourne la liste des expériences RESTANTES qui n'ont pas pu rentrer sur la page 1.
+    """
+    shapes = slide.shapes
+    experiences = cv_json.get("experience") or []
+    if not experiences:
+        return []
+
+    exp1_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp1"])
+    exp2_shape = find_shape_by_id(shapes, SLIDE1_SHAPES["exp2"])
+
+    # Liste des conteneurs disponibles dans l'ordre d'affichage (Ex: Haut-Droite puis Gauche/Bas)
+    available_boxes = [box for box in [exp1_shape, exp2_shape] if box is not None]
+
+    exp_index = 0
+    num_experiences = len(experiences)
+
+    for box in available_boxes:
+        if exp_index >= num_experiences:
+            # Plus d'expériences à placer, on vide les boîtes restantes
+            box.text_frame.clear()
+            continue
+
+        box_capacity = _estimate_capacity_chars(box, font_pt=8)
+        current_box_exps = []
+        current_chars = 0
+
+        # On remplit cette boîte tant que la capacité le permet
+        while exp_index < num_experiences:
+            next_exp = experiences[exp_index]
+            exp_chars = _experience_char_count(next_exp)
+
+            # Si c'est la 1ère expérience de la boîte OU si elle rentre dans le budget
+            if not current_box_exps or (current_chars + exp_chars <= box_capacity):
+                current_box_exps.append(next_exp)
+                current_chars += exp_chars
+                exp_index += 1
+            else:
+                # La boîte est pleine, on arrête pour cette boîte
+                break
+
+        # Ecriture des expériences sélectionnées dans cette boîte
+        _write_experiences_into_shape(box, current_box_exps, with_spacer=True)
+
+    # On retourne les expériences qui n'ont pas tenu sur la page 1
+    return experiences[exp_index:]

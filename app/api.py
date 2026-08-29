@@ -29,6 +29,7 @@ import shutil
 import tempfile
 import os
 from bson import ObjectId
+from requests import request
 
 from app.services.candidate_service import CandidateService
 from app.extraction.pipeline import extract_and_store_cv
@@ -57,6 +58,8 @@ from app.main_usage import (
     GENERATED_CV_DIR,
     run_matching_for_candidate_id,
 )
+from app.matching.run_mission_matching import run_mission_matching_v2
+from app.matching.gemini_client import get_gemini_mission_client
 
 
 
@@ -91,10 +94,11 @@ class UpdateNameRequest(BaseModel):
 
 
 class GenerationRequest(BaseModel):
-    # None = no LLM wording adaptation, experiences are inserted as-is.
     mission_text: Optional[str] = None
     target_language: str = "French"
     candidates: list[SelectedCandidate]
+    merge_into_one_document: bool = False
+    output_format: str = "pptx"
 
 
 class AdvancedSearchRequest(BaseModel):
@@ -109,11 +113,7 @@ class AdvancedSearchRequest(BaseModel):
     page: int = 1
     limit: int = 20
 
-class GenerationRequest(BaseModel):
-    mission_text: Optional[str] = None
-    target_language: str = "French"
-    candidates: list[SelectedCandidate]
-    merge_into_one_document: bool = False    
+ 
 
 
 class ScoreRequest(BaseModel):
@@ -208,8 +208,15 @@ async def upload_cv(files: list[UploadFile] = File(...)):
 
 @app.post("/candidates/match")
 async def match_mission(request: MissionRequest):
-    """Scan stored candidates against mission text and rank them."""
-    relevant = run_mission_matching(request.mission_text)
+    """
+    Multi-criteria matching: experience similarity (SBERT, unchanged) +
+    skills coverage + certifications coverage, combined into global_score.
+    """
+    relevant = run_mission_matching_v2(
+        request.mission_text,
+        get_gemini_mission_client(),
+        candidate_service,
+    )
     return {"candidates": relevant}
 
 
@@ -394,22 +401,22 @@ async def generate_adapted_cv_json(candidate_id: str, request: CustomSelectionAd
                 result[section] = candidate[section]
 
         # Récupération et préparation des expériences choisies
-        sel_exp_indices = set(request.selected_experience_indices or [])
+        sel_exp_indices = request.selected_experience_indices or []
         raw_exp_list = candidate.get("experience") or []
         selected_exps = []
-        for idx, exp in enumerate(raw_exp_list):
-            if idx in sel_exp_indices:
-                item = dict(exp)
+        for idx in sel_exp_indices:
+            if 0 <= idx < len(raw_exp_list):
+                item = dict(raw_exp_list[idx])
                 item["experience_index"] = idx
                 selected_exps.append(item)
 
         # Récupération et préparation des projets choisis
-        sel_proj_indices = set(request.selected_project_indices or [])
+        sel_proj_indices = request.selected_project_indices or []
         raw_proj_list = candidate.get("projects") or []
         selected_projs = []
-        for idx, proj in enumerate(raw_proj_list):
-            if idx in sel_proj_indices:
-                item = dict(proj)
+        for idx in sel_proj_indices:
+            if 0 <= idx < len(raw_proj_list):
+                item = dict(raw_proj_list[idx])
                 item["project_index"] = idx
                 selected_projs.append(item)
 
@@ -471,17 +478,21 @@ async def generate_cv(request: GenerationRequest):
 
 
 @app.get("/generation/cv/{candidate_id}/download")
-async def download_generated_cv(candidate_id: str):
-    path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.pptx")
+async def download_generated_cv(candidate_id: str, format: str = "pptx"):
+    if format not in ("pptx", "docx"):
+        raise HTTPException(status_code=400, detail="Format invalide.")
+    path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.{format}")
     if not os.path.exists(path):
         raise HTTPException(
             status_code=404,
             detail="CV non généré : appelez POST /generation/cv d'abord.",
         )
-    return FileResponse(
-        path,
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename=f"CV_{candidate_id}.pptx",
+    media_type = (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        if format == "pptx" else
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    return FileResponse(path, media_type=media_type, filename=f"CV_{candidate_id}.{format}"
     )
 
 @app.get("/generation/download/{filename}")

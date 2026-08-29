@@ -342,7 +342,7 @@ export function MatchingStep({
                       <p className="truncate text-xs text-slate-500">{c.email}</p>
                     </div>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-700">
-                      {c.avg_score.toFixed(1)}
+                      {(c.global_score * 100).toFixed(1)}
                     </span>
                     <button
                       onClick={() => onViewCandidate(c.candidate_id, c.name)}

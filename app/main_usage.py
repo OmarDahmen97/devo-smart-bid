@@ -31,7 +31,7 @@ import uuid
 from app.embedding.embedder import get_shared_embedder
 from app.embedding.vector_store import VectorStore
 from app.embedding.embedding_chunker import build_chunks_for_candidate
-from app.generation.cv_json_builder import extract_years_of_experience, is_candidate_relevant_v2, build_matched_cv_json , derive_title_from_experiences
+from app.generation.cv_json_builder import extract_years_of_experience, is_candidate_relevant_v2, build_matched_cv_json , derive_title_from_experiences, build_cv_json_from_selection
 from app.generation.mongo_resolver import invalidate_candidate_cache
 from app.merging.experience_similarity import build_merged_candidate_cv
 from app.profiling.profile_detector_full_cv import detect_profiles_full
@@ -39,6 +39,7 @@ from app.profiling.profile_builder import build_profiles_document, store_candida
 from app.generation.experience_adapter import adapt_selected_experiences, adapt_selected_projects,translate_summary,translate_selected_experiences
 
 from app.generation.pptx_renderer.template_filler import render_cv_pptx
+from app.generation.docx_renderer.template_filler import render_cv_docx
 from app.generation.pptx_renderer.deck_merger import merge_pptx_files
 
 from app.extraction.pipeline import extract_and_store_cv
@@ -51,6 +52,11 @@ merged_candidates_collection = db["merged_candidates"]
 candidate_profiles_collection = db["candidate_profiles"]
 
 _store = None
+
+RENDERERS = {
+    "pptx": {"render": render_cv_pptx, "extension": "pptx"},
+    "docx": {"render": render_cv_docx, "extension": "docx"},
+}
 
 
 def get_embedder():
@@ -399,133 +405,33 @@ def update_candidate_name(candidate_id: str, new_name: str) -> dict:
 
 
 
-def build_cv_json_from_selection(
-    mongo_collection,
-    candidate_id: str,
-    selected_experience_indices: list[int],
-    selected_project_indices: list[int] = None,
-    mission_text: str = None,
-    target_language: str = "English",
-) -> dict:
-    """
-    Builds the final CV JSON from a user-curated selection.
 
-    IMPORTANT: experience_index / project_index are NOT stored fields on
-    merged_candidates documents -- they are positional (0-based index in the
-    array), assigned at chunking time (see embedding_chunker.py) and echoed
-    back to the front end via chunk metadata in get_ranked_experiences/
-    get_ranked_projects. As long as the merged candidate's experience/projects
-    array order is stable between indexing and this call (true, since re-merge
-    only happens via sync_merged_candidate which is not triggered mid-review),
-    positional indexing here matches what the front end saw.
-    """
-    candidate = mongo_collection.find_one({"candidate_id": ObjectId(candidate_id)})
-    if not candidate:
-        return {}
-
-    selected_experience_indices = selected_experience_indices or []
-    selected_project_indices = selected_project_indices or []
-
-    result = {}
-    STATIC_SECTIONS = [
-        "summary", "skills", "expertise_areas", "functional_skills",
-        "education", "languages", "certifications",
-        "countries_worked", "professional_affiliations",
-    ]
-    for section in STATIC_SECTIONS:
-        value = candidate.get(section)
-        if value:  # skips None, [], ""
-            result[section] = value
-
-    # Translate the summary into target_language -- ALWAYS, independent of
-    # mission_text. Mission alignment (below) rewrites experiences/projects
-    # for relevance; this is a separate, unconditional language pass.
-    if result.get("summary"):
-        result["summary"] = translate_summary(result["summary"], target_language)
-
-    # Identity / contact fields -- all nullable in the source data
-    for field in ("name", "email", "phone", "linkedin", "github"):
-        value = candidate.get(field)
-        if value:
-            result[field] = value
-
-    # 1. Filter to selected items, by array position, preserving requested order
-    all_experiences = list(candidate.get("experience") or [])
-    experiences = []
-    for idx in selected_experience_indices:
-        if 0 <= idx < len(all_experiences):
-            exp = dict(all_experiences[idx])
-            exp["experience_index"] = idx
-            experiences.append(exp)
-
-    all_projects = list(candidate.get("projects") or [])
-    projects = []
-    for idx in selected_project_indices:
-        if 0 <= idx < len(all_projects):
-            proj = dict(all_projects[idx])
-            proj["project_index"] = idx
-            projects.append(proj)
-
-    title = derive_title_from_experiences(experiences, all_experiences)
-    if title:
-        result["title"] = title
-
-    years = extract_years_of_experience(candidate.get("summary") or "")
-    if years:
-        result["years_of_experience"] = years
-
-    for exp in experiences:
-        if not exp.get("dates") or exp["dates"] == "Not specified":
-            exp["dates"] = ""
-        exp["technologies"] = exp.get("technologies") or []
-        exp["responsibilities"] = exp.get("responsibilities") or []
-        exp["deliverables"] = exp.get("deliverables") or []
-        exp["description"] = exp.get("description") or ""
-
-    for proj in projects:
-        proj["technologies"] = proj.get("technologies") or []
-        proj["description"] = proj.get("description") or ""
-
-    # 3. Adapt wording -- mission-aligned rewrite if a mission is given,
-    # otherwise a straight translation so target_language is still honored.
-    if experiences:
-        if mission_text:
-            adapted_exp_map = adapt_selected_experiences(experiences, mission_text, target_language)
-        else:
-            adapted_exp_map = translate_selected_experiences(experiences, target_language)
-        for exp in experiences:
-            idx = exp["experience_index"]
-            if idx in adapted_exp_map:
-                if adapted_exp_map[idx].get("description"):
-                    exp["description"] = adapted_exp_map[idx]["description"]
-                if adapted_exp_map[idx].get("responsibilities"):
-                    exp["responsibilities"] = adapted_exp_map[idx]["responsibilities"]
-
-    if projects:
-        if mission_text:
-            adapted_proj_map = adapt_selected_projects(projects, mission_text, target_language)
-            for proj in projects:
-                idx = proj["project_index"]
-                if idx in adapted_proj_map and adapted_proj_map[idx].get("description"):
-                    proj["description"] = adapted_proj_map[idx]["description"]
-
-    if experiences:
-        result["experience"] = experiences
-    if projects:
-        result["projects"] = projects
-
-    return result
 GENERATED_CV_DIR = "generated_cvs"
 
-
 def generate_cv_from_selection(payload: dict) -> dict:
+    print(f"[DEBUG RAW PAYLOAD] {payload!r}")
     mission_text = payload.get("mission_text")
     target_language = payload.get("target_language", "French")
     merge_into_one_document = payload.get("merge_into_one_document", False)
+    output_format = payload.get("output_format", "pptx")
+    print(f"[DEBUG] output_format={output_format!r}, RENDERERS keys={list(RENDERERS.keys())}, extension={RENDERERS.get(output_format, {}).get('extension')!r}")
+
+    if output_format not in RENDERERS:
+        return {"results": [], "error": f"Format de sortie non supporté : {output_format!r}"}
+
+    renderer = RENDERERS[output_format]["render"]
+    extension = RENDERERS[output_format]["extension"]
+
+    # Merge is only implemented for pptx -- silently ignored for docx rather
+    # than erroring, since the front end disables the checkbox for docx.
+    can_merge = output_format == "pptx"
+
+
+    
     os.makedirs(GENERATED_CV_DIR, exist_ok=True)
 
     results = []
-    generated_paths = []  # (candidate_id, path) for successfully generated files
+    generated_paths = []
 
     for entry in payload.get("candidates", []):
         candidate_id = entry["candidate_id"]
@@ -542,9 +448,9 @@ def generate_cv_from_selection(payload: dict) -> dict:
                              "message": "Candidat introuvable."})
             continue
 
-        output_path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.pptx")
+        output_path = os.path.join(GENERATED_CV_DIR, f"{candidate_id}.{extension}")
         try:
-            render_cv_pptx(cv_json, output_path, target_language=target_language)
+            renderer(cv_json, output_path, target_language=target_language)
         except Exception as e:
             results.append({"candidate_id": candidate_id, "status": "error",
                              "message": f"{type(e).__name__}: {e}"})
@@ -554,23 +460,21 @@ def generate_cv_from_selection(payload: dict) -> dict:
         results.append({
             "candidate_id": candidate_id,
             "status": "ok",
-            "download_url": f"/generation/cv/{candidate_id}/download",
+            "download_url": f"/generation/cv/{candidate_id}/download?format={extension}",
         })
 
     response = {"results": results}
 
     if generated_paths:
-        # Zip of all individual files -- always offered when >1 file exists.
         if len(generated_paths) > 1:
             batch_id = uuid.uuid4().hex
             zip_path = os.path.join(GENERATED_CV_DIR, f"batch_{batch_id}.zip")
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for candidate_id, path in generated_paths:
-                    zf.write(path, arcname=f"CV_{candidate_id}.pptx")
+                    zf.write(path, arcname=f"CV_{candidate_id}.{extension}")
             response["zip_download_url"] = f"/generation/download/batch_{batch_id}.zip"
 
-        # Single merged document, only if explicitly requested.
-        if merge_into_one_document and len(generated_paths) > 1:
+        if merge_into_one_document and can_merge and len(generated_paths) > 1:
             merged_id = uuid.uuid4().hex
             merged_path = os.path.join(GENERATED_CV_DIR, f"merged_{merged_id}.pptx")
             try:
@@ -578,9 +482,10 @@ def generate_cv_from_selection(payload: dict) -> dict:
                 response["merged_download_url"] = f"/generation/download/merged_{merged_id}.pptx"
             except Exception as e:
                 response["merge_error"] = f"{type(e).__name__}: {e}"
+        elif merge_into_one_document and not can_merge:
+            response["merge_error"] = "La fusion en un seul document n'est pas encore disponible pour le format DOCX."
 
     return response
-
 
 def run_profile_mode(cv_path: str = None, normalized_name: str = None) -> dict:
     candidate = get_candidate(cv_path=cv_path, normalized_name=normalized_name)

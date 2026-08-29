@@ -29,6 +29,12 @@ export type MatchCandidate = {
   name: string;
   email: string | null;
   avg_score: number;
+  global_score: number;
+  breakdown: Record<string, { score: number; weight_used: number }>;
+  skill_matched: string[];
+  skill_missing: string[];
+  cert_matched: string[];
+  cert_missing: string[];
 };
 
 export type MatchResponse = {
@@ -115,3 +121,4 @@ export type Candidate = {
   certifications: string[];
   company: string;
 };
+export type OutputFormat = "pptx" | "docx";

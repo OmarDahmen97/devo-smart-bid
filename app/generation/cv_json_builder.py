@@ -312,6 +312,125 @@ def build_matched_cv_json(
 
     return result
 
+
+def build_cv_json_from_selection(
+    mongo_collection,
+    candidate_id: str,
+    selected_experience_indices: list[int],
+    selected_project_indices: list[int] = None,
+    mission_text: str = None,
+    target_language: str = "English",
+) -> dict:
+    """
+    Builds the final CV JSON from a user-curated selection.
+
+    IMPORTANT: experience_index / project_index are NOT stored fields on
+    merged_candidates documents -- they are positional (0-based index in the
+    array), assigned at chunking time (see embedding_chunker.py) and echoed
+    back to the front end via chunk metadata in get_ranked_experiences/
+    get_ranked_projects. As long as the merged candidate's experience/projects
+    array order is stable between indexing and this call (true, since re-merge
+    only happens via sync_merged_candidate which is not triggered mid-review),
+    positional indexing here matches what the front end saw.
+    """
+    candidate = mongo_collection.find_one({"candidate_id": ObjectId(candidate_id)})
+    if not candidate:
+        return {}
+
+    selected_experience_indices = selected_experience_indices or []
+    selected_project_indices = selected_project_indices or []
+
+    result = {}
+    STATIC_SECTIONS = [
+        "summary", "skills", "expertise_areas", "functional_skills",
+        "education", "languages", "certifications",
+        "countries_worked", "professional_affiliations",
+    ]
+    for section in STATIC_SECTIONS:
+        value = candidate.get(section)
+        if value:  # skips None, [], ""
+            result[section] = value
+
+    # Translate the summary into target_language -- ALWAYS, independent of
+    # mission_text. Mission alignment (below) rewrites experiences/projects
+    # for relevance; this is a separate, unconditional language pass.
+    if result.get("summary"):
+        result["summary"] = translate_summary(result["summary"], target_language)
+
+    # Identity / contact fields -- all nullable in the source data
+    for field in ("name", "email", "phone", "linkedin", "github"):
+        value = candidate.get(field)
+        if value:
+            result[field] = value
+
+    # 1. Filter to selected items, by array position, preserving requested order
+    all_experiences = list(candidate.get("experience") or [])
+    experiences = []
+    for idx in selected_experience_indices:
+        if 0 <= idx < len(all_experiences):
+            exp = dict(all_experiences[idx])
+            exp["experience_index"] = idx
+            experiences.append(exp)
+
+    all_projects = list(candidate.get("projects") or [])
+    projects = []
+    for idx in selected_project_indices:
+        if 0 <= idx < len(all_projects):
+            proj = dict(all_projects[idx])
+            proj["project_index"] = idx
+            projects.append(proj)
+
+    title = derive_title_from_experiences(experiences, all_experiences)
+    if title:
+        result["title"] = title
+
+    years = extract_years_of_experience(candidate.get("summary") or "")
+    if years:
+        result["years_of_experience"] = years
+
+    for exp in experiences:
+        if not exp.get("dates") or exp["dates"] == "Not specified":
+            exp["dates"] = ""
+        exp["technologies"] = exp.get("technologies") or []
+        exp["responsibilities"] = exp.get("responsibilities") or []
+        exp["deliverables"] = exp.get("deliverables") or []
+        exp["description"] = exp.get("description") or ""
+
+    for proj in projects:
+        proj["technologies"] = proj.get("technologies") or []
+        proj["description"] = proj.get("description") or ""
+
+    # 3. Adapt wording -- mission-aligned rewrite if a mission is given,
+    # otherwise a straight translation so target_language is still honored.
+    if experiences:
+        if mission_text:
+            adapted_exp_map = adapt_selected_experiences(experiences, mission_text, target_language)
+        else:
+            adapted_exp_map = translate_selected_experiences(experiences, target_language)
+        for exp in experiences:
+            idx = exp["experience_index"]
+            if idx in adapted_exp_map:
+                if adapted_exp_map[idx].get("description"):
+                    exp["description"] = adapted_exp_map[idx]["description"]
+                if adapted_exp_map[idx].get("responsibilities"):
+                    exp["responsibilities"] = adapted_exp_map[idx]["responsibilities"]
+
+    if projects:
+        if mission_text:
+            adapted_proj_map = adapt_selected_projects(projects, mission_text, target_language)
+            for proj in projects:
+                idx = proj["project_index"]
+                if idx in adapted_proj_map and adapted_proj_map[idx].get("description"):
+                    proj["description"] = adapted_proj_map[idx]["description"]
+
+    if experiences:
+        result["experience"] = experiences
+    if projects:
+        result["projects"] = projects
+
+    return result
+
+
 _WORD_TO_NUM = {
     "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
     "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,

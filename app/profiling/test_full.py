@@ -12,7 +12,7 @@ from app.profiling.profile_builder import build_profiles_document, store_candida
 load_dotenv()
 client = MongoClient(os.getenv("MONGO_URI"))
 db = client["cv_platform"]
-candidates = db["candidates"]
+candidates = db["candidatesV2"]
 candidate_profiles = db["candidate_profiles"]
 
 already_done = {doc["candidate_id"] for doc in candidate_profiles.find({}, {"candidate_id": 1})}
